@@ -1,0 +1,60 @@
+# Unreal generated folders
+Binaries/
+DerivedDataCache/
+Intermediate/
+Saved/
+.vs/
+
+# IDE and generated project files
+.idea/
+.vscode/
+*.VC.db
+*.VC.opendb
+*.sdf
+*.sln
+*.suo
+*.opensdf
+*.xcodeproj
+*.xcworkspace
+
+# Compiled objects and debug data
+*.dll
+*.exe
+*.lib
+*.obj
+*.pdb
+*.exp
+*.ilk
+
+# User and local files
+*.user
+*.userprefs
+*.tmp
+*.log
+Thumbs.db
+Desktop.ini
+.DS_Store
+
+# Local Steam development files
+steam_appid.txt
+
+# Secrets and machine-local configuration
+.env
+.env.*
+!.env.example
+Config/Local/
+Config/Secrets/
+Config/**/*.local.ini
+*.key
+*.pem
+*.pfx
+*.p12
+*.keystore
+*.mobileprovision
+
+# Developer sandbox assets are local experiments
+Content/Developers/
+
+# Internal documentation and source art are versioned separately
+Docs/
+SourceArt/

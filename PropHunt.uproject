@@ -1,0 +1,23 @@
+{
+	"FileVersion": 3,
+	"EngineAssociation": "{DE6846EF-4974-E4E5-9A4B-2BAC01D757FB}",
+	"Category": "Games",
+	"Description": "Asymmetric multiplayer Prop Hunt game.",
+	"Modules": [
+		{
+			"Name": "PropHunt",
+			"Type": "Runtime",
+			"LoadingPhase": "Default"
+		}
+	],
+	"Plugins": [
+		{
+			"Name": "AndroidFileServer",
+			"Enabled": false
+		},
+		{
+			"Name": "RemoteControl",
+			"Enabled": true
+		}
+	]
+}

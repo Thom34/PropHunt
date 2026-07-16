@@ -11,7 +11,18 @@ public class PropHunt : ModuleRules
 			{
 				"Core",
 				"CoreUObject",
-				"Engine"
+				"Engine",
+				"InputCore",
+				"PhysicsCore",
+				"UMG"
+			}
+		);
+
+		PrivateDependencyModuleNames.AddRange(
+			new string[]
+			{
+				"Slate",
+				"SlateCore"
 			}
 		);
 	}

@@ -1,0 +1,27 @@
+{
+  "FileVersion": 3,
+  "Version": 1,
+  "VersionName": "0.1.0",
+  "FriendlyName": "ThomasEditor",
+  "Description": "Project-local, editor-only MCP bridge for compact Blueprint inspection and configuration.",
+  "Category": "Editor",
+  "CreatedBy": "Thomas",
+  "EngineVersion": "5.8.0",
+  "EnabledByDefault": false,
+  "CanContainContent": false,
+  "IsBetaVersion": true,
+  "Modules": [
+    {
+      "Name": "ThomasEditor",
+      "Type": "Editor",
+      "LoadingPhase": "Default"
+    }
+  ],
+  "Plugins": [
+    {
+      "Name": "RemoteControl",
+      "Enabled": true,
+      "TargetAllowList": ["Editor"]
+    }
+  ]
+}

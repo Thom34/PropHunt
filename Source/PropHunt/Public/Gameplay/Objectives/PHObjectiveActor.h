@@ -1,0 +1,147 @@
+#pragma once
+
+#include "CoreMinimal.h"
+#include "GameFramework/Actor.h"
+
+#include "PHObjectiveActor.generated.h"
+
+class APHPropCharacter;
+class USceneComponent;
+class UStaticMeshComponent;
+
+UENUM(BlueprintType)
+enum class EPHObjectiveInterruptionPolicy : uint8
+{
+	Preserve UMETA(DisplayName = "Preserve Progress"),
+	Reset UMETA(DisplayName = "Reset Progress"),
+	Regress UMETA(DisplayName = "Regress Progress")
+};
+
+namespace PHObjectiveFlow
+{
+	inline float GetContributionMultiplier(
+		const int32 InteractorCount,
+		const float AdditionalInteractorContribution)
+	{
+		return InteractorCount > 0
+			? 1.0f + static_cast<float>(InteractorCount - 1) * FMath::Clamp(AdditionalInteractorContribution, 0.0f, 1.0f)
+			: 0.0f;
+	}
+
+	inline float AdvanceProgress(
+		const float CurrentProgress,
+		const float DeltaSeconds,
+		const float DurationSeconds,
+		const int32 InteractorCount,
+		const float AdditionalInteractorContribution)
+	{
+		if (DeltaSeconds <= 0.0f || DurationSeconds <= 0.0f || InteractorCount <= 0)
+		{
+			return FMath::Clamp(CurrentProgress, 0.0f, 1.0f);
+		}
+
+		const float Contribution = GetContributionMultiplier(InteractorCount, AdditionalInteractorContribution);
+		return FMath::Clamp(CurrentProgress + DeltaSeconds * Contribution / DurationSeconds, 0.0f, 1.0f);
+	}
+}
+
+UCLASS(Blueprintable)
+class PROPHUNT_API APHObjectiveActor : public AActor
+{
+	GENERATED_BODY()
+
+public:
+	APHObjectiveActor();
+
+	virtual void BeginPlay() override;
+	virtual void EndPlay(const EEndPlayReason::Type EndPlayReason) override;
+	virtual void Tick(float DeltaSeconds) override;
+	virtual void GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& OutLifetimeProps) const override;
+
+	UFUNCTION(BlueprintPure, Category = "PropHunt|Objective")
+	float GetObjectiveProgress() const { return ObjectiveProgress; }
+
+	UFUNCTION(BlueprintPure, Category = "PropHunt|Objective")
+	bool IsObjectiveCompleted() const { return bCompleted; }
+
+	UFUNCTION(BlueprintPure, Category = "PropHunt|Objective")
+	bool IsObjectiveActive() const { return bObjectiveActive; }
+
+	UFUNCTION(BlueprintPure, Category = "PropHunt|Objective")
+	int32 GetActiveInteractorCount() const { return ActiveInteractorCount; }
+
+	UFUNCTION(BlueprintPure, Category = "PropHunt|Objective")
+	float GetInteractionDurationSeconds() const { return InteractionDurationSeconds; }
+
+	UFUNCTION(BlueprintPure, Category = "PropHunt|Objective")
+	float GetInteractionDistance() const { return InteractionDistance; }
+
+	UFUNCTION(BlueprintPure, Category = "PropHunt|Objective")
+	EPHObjectiveInterruptionPolicy GetInterruptionPolicy() const { return InterruptionPolicy; }
+
+	FVector GetInteractionPoint() const;
+	bool CanPropInteract(const APHPropCharacter& PropCharacter) const;
+	bool ServerTryBeginInteraction(APHPropCharacter& PropCharacter);
+	void ServerEndInteraction(APHPropCharacter& PropCharacter);
+	void ResetForMatch(bool bShouldBeActive);
+
+protected:
+	UFUNCTION(BlueprintImplementableEvent, Category = "PropHunt|Objective", meta = (DisplayName = "On Objective State Changed"))
+	void BP_OnObjectiveStateChanged();
+
+	UFUNCTION(BlueprintImplementableEvent, Category = "PropHunt|Objective", meta = (DisplayName = "On Objective Completed"))
+	void BP_OnObjectiveCompleted();
+
+private:
+	UFUNCTION()
+	void OnRep_ObjectiveState();
+
+	void RefreshPresentation();
+	void RefreshInteractorCount();
+	void CompleteObjective();
+	void ApplyIdleProgressRule(float DeltaSeconds);
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "PropHunt|Objective", meta = (AllowPrivateAccess = "true"))
+	TObjectPtr<USceneComponent> SceneRoot;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "PropHunt|Objective", meta = (AllowPrivateAccess = "true"))
+	TObjectPtr<UStaticMeshComponent> ObjectiveBody;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "PropHunt|Objective", meta = (AllowPrivateAccess = "true"))
+	TObjectPtr<UStaticMeshComponent> ProgressBackground;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "PropHunt|Objective", meta = (AllowPrivateAccess = "true"))
+	TObjectPtr<UStaticMeshComponent> ProgressFill;
+
+	UPROPERTY(EditDefaultsOnly, Category = "PropHunt|Objective", meta = (ClampMin = "1.0", ClampMax = "120.0", Units = "s", AllowPrivateAccess = "true"))
+	float InteractionDurationSeconds;
+
+	UPROPERTY(EditDefaultsOnly, Category = "PropHunt|Objective", meta = (ClampMin = "100.0", ClampMax = "500.0", Units = "cm", AllowPrivateAccess = "true"))
+	float InteractionDistance;
+
+	UPROPERTY(EditDefaultsOnly, Category = "PropHunt|Objective", meta = (ClampMin = "1", ClampMax = "4", AllowPrivateAccess = "true"))
+	int32 MaximumConcurrentInteractors;
+
+	UPROPERTY(EditDefaultsOnly, Category = "PropHunt|Objective", meta = (ClampMin = "0.0", ClampMax = "1.0", AllowPrivateAccess = "true"))
+	float AdditionalInteractorContribution;
+
+	UPROPERTY(EditDefaultsOnly, Category = "PropHunt|Objective", meta = (AllowPrivateAccess = "true"))
+	EPHObjectiveInterruptionPolicy InterruptionPolicy;
+
+	UPROPERTY(EditDefaultsOnly, Category = "PropHunt|Objective", meta = (ClampMin = "0.0", ClampMax = "1.0", AllowPrivateAccess = "true"))
+	float ProgressRegressionPerSecond;
+
+	UPROPERTY(ReplicatedUsing = OnRep_ObjectiveState, VisibleInstanceOnly, BlueprintReadOnly, Category = "PropHunt|Objective", meta = (AllowPrivateAccess = "true"))
+	float ObjectiveProgress;
+
+	UPROPERTY(ReplicatedUsing = OnRep_ObjectiveState, VisibleInstanceOnly, BlueprintReadOnly, Category = "PropHunt|Objective", meta = (AllowPrivateAccess = "true"))
+	bool bObjectiveActive;
+
+	UPROPERTY(ReplicatedUsing = OnRep_ObjectiveState, VisibleInstanceOnly, BlueprintReadOnly, Category = "PropHunt|Objective", meta = (AllowPrivateAccess = "true"))
+	bool bCompleted;
+
+	UPROPERTY(ReplicatedUsing = OnRep_ObjectiveState, VisibleInstanceOnly, BlueprintReadOnly, Category = "PropHunt|Objective", meta = (AllowPrivateAccess = "true"))
+	int32 ActiveInteractorCount;
+
+	TSet<TWeakObjectPtr<APHPropCharacter>> ActiveInteractors;
+};

@@ -25,6 +25,8 @@ Saved/
 *.pdb
 *.exp
 *.ilk
+*.pyc
+__pycache__/
 
 # User and local files
 *.user
@@ -58,3 +60,14 @@ Content/Developers/
 # Internal documentation and source art are versioned separately
 Docs/
 SourceArt/
+
+# Machine-local Codex bridge configuration
+.codex/
+
+# Local reference characters and extracted prototype assets are not redistributable
+Content/PropHunt/Characters/**/Prototype/Mixamo/
+Content/PropHunt/Characters/**/Prototype/PropnightReference/
+Content/PropHunt/Audio/Props/ScreamingChicken/
+Content/PropHunt/Data/Physics/
+Content/PropHunt/Gameplay/PhysicsProps/ScreamingChicken/
+Content/PropHunt/Tests/L_PH_PhysicsPropTest.umap

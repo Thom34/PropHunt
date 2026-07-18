@@ -6,6 +6,7 @@
 #include "PHPhysicsPropDataAsset.generated.h"
 
 class UPhysicalMaterial;
+class UAudioComponent;
 class USoundBase;
 class UStaticMesh;
 
@@ -18,6 +19,7 @@ public:
 	UPHPhysicsPropDataAsset();
 
 	bool HasValidDefinition(FText* OutError = nullptr) const;
+	void ConfigureImpactAudioComponent(UAudioComponent& AudioComponent) const;
 
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "PropHunt|Physics Prop")
 	FName PropId;
@@ -43,8 +45,35 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "PropHunt|Physics Prop|Impact", meta = (ClampMin = "0.05", ClampMax = "2.0", Units = "s"))
 	float ImpactSoundCooldownSeconds;
 
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "PropHunt|Physics Prop|Impact", meta = (ClampMin = "0.0", ClampMax = "1000.0", Units = "cm"))
+	float ImpactSoundInnerRadius;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "PropHunt|Physics Prop|Impact", meta = (ClampMin = "100.0", ClampMax = "10000.0", Units = "cm"))
+	float ImpactSoundFalloffDistance;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "PropHunt|Physics Prop|Impact")
+	bool bImpactSoundOcclusion;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "PropHunt|Physics Prop|Impact", meta = (ClampMin = "0.0", ClampMax = "1.0"))
+	float ImpactSoundOcclusionVolumeAttenuation;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "PropHunt|Physics Prop|Impact", meta = (ClampMin = "20.0", ClampMax = "20000.0", Units = "Hz"))
+	float ImpactSoundOcclusionLowPassFilterFrequency;
+
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "PropHunt|Physics Prop|Network", meta = (ClampMin = "1.0", ClampMax = "120.0", Units = "Hz"))
 	float NetworkUpdateFrequency;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "PropHunt|Physics Prop|Network", meta = (ClampMin = "1.0", ClampMax = "120.0"))
+	float NetworkVisualLocationSmoothingSpeed;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "PropHunt|Physics Prop|Network", meta = (ClampMin = "1.0", ClampMax = "120.0"))
+	float NetworkVisualRotationSmoothingSpeed;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "PropHunt|Physics Prop|Network", meta = (ClampMin = "0.0", ClampMax = "0.25", Units = "s"))
+	float NetworkVisualMaximumExtrapolationSeconds;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "PropHunt|Physics Prop|Network", meta = (ClampMin = "50.0", ClampMax = "2000.0", Units = "cm"))
+	float NetworkVisualTeleportDistance;
 
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "PropHunt|Physics Prop|Motion", meta = (ClampMin = "0.0"))
 	float FreeLinearDamping;

@@ -45,6 +45,17 @@ UPrimitiveComponent* APHPropTransformTarget::GetActiveSelectionCollision() const
 	return SelectionCollision;
 }
 
+void APHPropTransformTarget::SetLocallyHighlighted(const bool bHighlighted)
+{
+	if (TargetMesh == nullptr)
+	{
+		return;
+	}
+
+	TargetMesh->SetCustomDepthStencilValue(1);
+	TargetMesh->SetRenderCustomDepth(bHighlighted);
+}
+
 void APHPropTransformTarget::OnConstruction(const FTransform& Transform)
 {
 	Super::OnConstruction(Transform);

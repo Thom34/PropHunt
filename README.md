@@ -86,9 +86,11 @@ bloqué, dégagement borné près de la cible, mêlée au même niveau et légè
 réplication et nettoyage après déconnexion. La gate sur une seconde machine physique reste à effectuer
 avant de considérer ce bloc multijoueur de Phase 1 comme terminé.
 
-La prochaine priorité est le support Steam pour partager le prototype : sessions/lobbies, invitations, voyage
-listen server et validation d'un build packagé avec deux comptes. Le checkout UE 5.8 canonique fournit déjà
-`OnlineSubsystemSteam`, qui doit encore être activé et intégré au projet.
+Le matchmaking Steam natif est maintenant intégré pour l'App `1551300` : choix Tueur, Survivant ou Aléatoire,
+priorité au plus ancien lobby disponible et quota souple de deux lobbies Tueur visibles. Le checkout fournit
+également une cible serveur dédié Win64/Linux, des packages client/serveur alignés sur le protocole `6` et un kit
+d'exploitation sous `BuildTools/Server/Linux`. Les prochaines gates externes sont la publication/découverte sur
+Linux réel, une jonction depuis un second compte Steam et le parcours complet Results puis Lobby.
 
 `Plugins/ThomasEditor` est un outil Editor-only local au projet. Codex le découvre uniquement dans ce dépôt via
 `.codex/config.toml` ; il ne contient aucune règle de gameplay et n'est pas inclus dans le build jeu.

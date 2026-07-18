@@ -5,9 +5,11 @@
 
 #include "PHObjectiveActor.generated.h"
 
+class APHHunterCharacter;
 class APHPropCharacter;
 class USceneComponent;
 class UStaticMeshComponent;
+class UWidgetComponent;
 
 UENUM(BlueprintType)
 enum class EPHObjectiveInterruptionPolicy : uint8
@@ -42,6 +44,17 @@ namespace PHObjectiveFlow
 
 		const float Contribution = GetContributionMultiplier(InteractorCount, AdditionalInteractorContribution);
 		return FMath::Clamp(CurrentProgress + DeltaSeconds * Contribution / DurationSeconds, 0.0f, 1.0f);
+	}
+
+	inline float ApplyHunterMeleeRegression(
+		const float CurrentProgress,
+		const float RegressionFraction)
+	{
+		return FMath::Clamp(
+			FMath::Clamp(CurrentProgress, 0.0f, 1.0f)
+				- FMath::Clamp(RegressionFraction, 0.0f, 1.0f),
+			0.0f,
+			1.0f);
 	}
 }
 
@@ -79,10 +92,14 @@ public:
 	UFUNCTION(BlueprintPure, Category = "PropHunt|Objective")
 	EPHObjectiveInterruptionPolicy GetInterruptionPolicy() const { return InterruptionPolicy; }
 
+	UFUNCTION(BlueprintPure, Category = "PropHunt|Objective|Hunter")
+	float GetHunterMeleeRegressionFraction() const { return HunterMeleeRegressionFraction; }
+
 	FVector GetInteractionPoint() const;
 	bool CanPropInteract(const APHPropCharacter& PropCharacter) const;
 	bool ServerTryBeginInteraction(APHPropCharacter& PropCharacter);
 	void ServerEndInteraction(APHPropCharacter& PropCharacter);
+	bool ServerApplyHunterMeleeRegression(APHHunterCharacter& HunterCharacter);
 	void ResetForMatch(bool bShouldBeActive);
 
 protected:
@@ -91,6 +108,9 @@ protected:
 
 	UFUNCTION(BlueprintImplementableEvent, Category = "PropHunt|Objective", meta = (DisplayName = "On Objective Completed"))
 	void BP_OnObjectiveCompleted();
+
+	UFUNCTION(BlueprintImplementableEvent, Category = "PropHunt|Objective", meta = (DisplayName = "On Objective Hit By Hunter"))
+	void BP_OnObjectiveHitByHunter(float RegressionAmount);
 
 private:
 	UFUNCTION()
@@ -113,6 +133,9 @@ private:
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "PropHunt|Objective", meta = (AllowPrivateAccess = "true"))
 	TObjectPtr<UStaticMeshComponent> ProgressFill;
 
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "PropHunt|Objective", meta = (AllowPrivateAccess = "true"))
+	TObjectPtr<UWidgetComponent> ProgressWidgetComponent;
+
 	UPROPERTY(EditDefaultsOnly, Category = "PropHunt|Objective", meta = (ClampMin = "1.0", ClampMax = "120.0", Units = "s", AllowPrivateAccess = "true"))
 	float InteractionDurationSeconds;
 
@@ -130,6 +153,9 @@ private:
 
 	UPROPERTY(EditDefaultsOnly, Category = "PropHunt|Objective", meta = (ClampMin = "0.0", ClampMax = "1.0", AllowPrivateAccess = "true"))
 	float ProgressRegressionPerSecond;
+
+	UPROPERTY(EditDefaultsOnly, Category = "PropHunt|Objective|Hunter", meta = (ClampMin = "0.01", ClampMax = "0.5", AllowPrivateAccess = "true"))
+	float HunterMeleeRegressionFraction;
 
 	UPROPERTY(ReplicatedUsing = OnRep_ObjectiveState, VisibleInstanceOnly, BlueprintReadOnly, Category = "PropHunt|Objective", meta = (AllowPrivateAccess = "true"))
 	float ObjectiveProgress;

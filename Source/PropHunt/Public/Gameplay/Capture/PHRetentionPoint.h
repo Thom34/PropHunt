@@ -38,6 +38,11 @@ public:
 	UFUNCTION(BlueprintPure, Category = "PropHunt|Capture")
 	APHPropCharacter* GetReleaseRescuer() const { return ReleaseRescuer; }
 
+	bool IsReleaseInProgressFor(const APHPropCharacter& Prop) const
+	{
+		return RetainedProp == &Prop && ReleaseRescuer != nullptr;
+	}
+
 	UFUNCTION(BlueprintPure, Category = "PropHunt|Capture")
 	FVector GetInteractionPoint() const;
 

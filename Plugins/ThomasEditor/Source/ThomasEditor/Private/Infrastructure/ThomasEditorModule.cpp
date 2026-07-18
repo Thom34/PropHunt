@@ -15,7 +15,7 @@ IMPLEMENT_MODULE(FThomasEditorModule, ThomasEditor)
 
 namespace
 {
-FString CompactJson(const TSharedRef<FJsonObject>& Object)
+FString CompactModuleJson(const TSharedRef<FJsonObject>& Object)
 {
     FString Output;
     const auto Writer = TJsonWriterFactory<TCHAR, TCondensedJsonPrintPolicy<TCHAR>>::Create(&Output);
@@ -106,7 +106,7 @@ FString FThomasEditorModule::GetRecentMessagesJson(int32 Limit, const FString& F
     Result->SetBoolField(TEXT("ok"), true);
     Result->SetNumberField(TEXT("count"), Items.Num());
     Result->SetArrayField(TEXT("items"), Items);
-    return CompactJson(Result);
+    return CompactModuleJson(Result);
 }
 
 void FThomasEditorModule::RegisterRemoteFunctions()

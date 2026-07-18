@@ -3,6 +3,7 @@
 #include "CoreMinimal.h"
 #include "Characters/PHCharacterBase.h"
 #include "Gameplay/Capture/PHCaptureTypes.h"
+#include "Gameplay/Physics/PHPhysicsPropPresentation.h"
 #include "Gameplay/Transformation/PHPropFormDataAsset.h"
 
 #include "PHPropCharacter.generated.h"
@@ -11,14 +12,17 @@ class UCameraComponent;
 class UAnimSequence;
 class UBoxComponent;
 class UCapsuleComponent;
+class USceneComponent;
 class USkeletalMesh;
 class USpringArmComponent;
 class UStaticMeshComponent;
 class APHHunterCharacter;
+class APHExitGate;
 class APHObjectiveActor;
 class APHPropTransformTarget;
 class APHRetentionPoint;
 class APHHumanPrototypeSelector;
+class UPHPhysicsPropDataAsset;
 
 struct FPHResolvedPropHitbox
 {
@@ -103,6 +107,8 @@ public:
 	virtual void SetupPlayerInputComponent(UInputComponent* PlayerInputComponent) override;
 	virtual bool IsMoveInputIgnored() const override;
 	virtual void Landed(const FHitResult& Hit) override;
+	virtual FRotator GetViewRotation() const override;
+	virtual void CalcCamera(float DeltaTime, FMinimalViewInfo& OutResult) override;
 
 #if WITH_EDITOR
 	virtual void PostEditChangeProperty(FPropertyChangedEvent& PropertyChangedEvent) override;
@@ -115,6 +121,12 @@ public:
 
 	UFUNCTION(BlueprintCallable, Category = "PropHunt|Capture")
 	void RequestCaptureRescue();
+
+#if !UE_BUILD_SHIPPING
+	void ForceFinalRetentionForSmoke(APHRetentionPoint& SmokeRetentionPoint);
+	bool ForcePropFormForSmoke(UPHPropFormDataAsset& SmokeForm);
+	void PrepareMementoForSmoke(int32 PriorRetentionCount);
+#endif
 
 	UFUNCTION(BlueprintPure, Category = "PropHunt|Capture")
 	EPHPropCaptureState GetCaptureState() const { return CaptureState; }
@@ -170,6 +182,9 @@ public:
 	UFUNCTION(BlueprintPure, Category = "PropHunt|Capture|Recovery")
 	int32 GetRecoveryHelperCount() const { return RecoveryHelperCount; }
 
+	UFUNCTION(BlueprintPure, Category = "PropHunt|Capture|Recovery")
+	float GetCarryDropRecoveryBonus() const { return CarryDropRecoveryBonus; }
+
 	UFUNCTION(BlueprintPure, Category = "PropHunt|Capture|Struggle")
 	float GetCarryStruggleProgress() const { return CarryStruggleProgress; }
 
@@ -184,6 +199,21 @@ public:
 
 	UFUNCTION(BlueprintPure, Category = "PropHunt|Capture|Struggle")
 	float GetCarryStruggleHunterShoveDistance() const { return CarryStruggleHunterShoveDistance; }
+
+	UFUNCTION(BlueprintPure, Category = "PropHunt|Camera")
+	float GetCameraTargetHeight() const { return CameraTargetHeight; }
+
+	UFUNCTION(BlueprintPure, Category = "PropHunt|Camera")
+	float GetMinimumCameraGroundClearance() const { return MinimumCameraGroundClearance; }
+
+	UFUNCTION(BlueprintPure, Category = "PropHunt|Camera")
+	USceneComponent* GetPropPresentationRoot() const { return PropPresentationRoot; }
+
+	UFUNCTION(BlueprintPure, Category = "PropHunt|Camera")
+	USpringArmComponent* GetPropCameraBoom() const { return CameraBoom; }
+
+	UFUNCTION(BlueprintPure, Category = "PropHunt|Presentation")
+	UStaticMeshComponent* GetPropPresentationMesh() const { return GrayboxPropBody; }
 
 	UFUNCTION(BlueprintPure, Category = "PropHunt|Capture|Presentation")
 	FVector GetPrimaryCarryAttachmentOffset() const { return PrimaryCarryAttachmentOffset; }
@@ -203,8 +233,13 @@ public:
 	bool ServerTryBeCarriedBy(APHHunterCharacter& Hunter);
 	void ServerDropFromCarrier();
 	void ServerRetainAt(APHRetentionPoint& NewRetentionPoint);
+	void ServerClampRetainedEliminationDelay(float MaximumRemainingSeconds);
 	void ServerReleaseWithGrace();
+	bool ServerStartMemento(FVector ImpactPoint, FVector LaunchVelocity, float DurationSeconds);
 	void ResetCaptureForMatch();
+
+	UFUNCTION(BlueprintPure, Category = "PropHunt|Memento")
+	bool IsMementoInProgress() const { return bMementoInProgress; }
 
 	UFUNCTION(BlueprintCallable, Category = "PropHunt|Presentation|Human")
 	void RequestSwitchHumanPrototype();
@@ -256,8 +291,27 @@ public:
 		return TransformationState.ActiveForm != nullptr
 			|| CaptureState == EPHPropCaptureState::Downed
 			|| CaptureState == EPHPropCaptureState::Carried
-			|| CaptureState == EPHPropCaptureState::Retained;
+			|| CaptureState == EPHPropCaptureState::Retained
+			|| bMementoInProgress;
 	}
+
+	void SetLocallySpectated(bool bSpectated);
+
+	UFUNCTION(BlueprintPure, Category = "PropHunt|Interaction")
+	FText GetPrimaryInteractionPromptText() const { return CachedPrimaryInteractionPrompt; }
+
+	UFUNCTION(BlueprintPure, Category = "PropHunt|Escape")
+	APHExitGate* GetActiveExitGate() const { return ActiveExitGate; }
+
+	void SetActiveExitGateFromServer(APHExitGate* ExitGate);
+	void ClearActiveExitGateFromServer(const APHExitGate* ExpectedGate);
+	void ServerEscapeThroughGate(APHExitGate& ExitGate);
+
+	UFUNCTION(BlueprintPure, Category = "PropHunt|Physics Prop")
+	bool IsUsingPhysicsPropMovement() const;
+
+	UFUNCTION(BlueprintPure, Category = "PropHunt|Physics Prop")
+	const UPHPhysicsPropDataAsset* GetPhysicsPropDefinition() const { return DefaultPhysicsPropDefinition; }
 
 	UFUNCTION(BlueprintPure, Category = "PropHunt|Human|Stamina")
 	float GetHumanStamina() const { return CurrentHumanStamina; }
@@ -318,6 +372,9 @@ protected:
 	UFUNCTION(BlueprintImplementableEvent, Category = "PropHunt|Capture", meta = (DisplayName = "On Capture Progress Changed"))
 	void BP_OnCaptureProgressChanged(float DownedProgress, int32 HelperCount, float StruggleProgress);
 
+	UFUNCTION(BlueprintImplementableEvent, Category = "PropHunt|Memento", meta = (DisplayName = "On Memento Started"))
+	void BP_OnMementoStarted(FVector ImpactPoint);
+
 	UFUNCTION(BlueprintImplementableEvent, Category = "PropHunt|Transformation", meta = (DisplayName = "On Prop Transformation Anticipated"))
 	void BP_OnPropTransformationAnticipated(bool bReturningToInitial);
 
@@ -338,6 +395,11 @@ protected:
 
 	virtual bool CanJumpInternal_Implementation() const override;
 	virtual void OnJumped_Implementation() override;
+	virtual void MoveForward(float Value) override;
+	virtual void MoveRight(float Value) override;
+	virtual void RequestJump() override;
+	virtual void RequestStopJump() override;
+	virtual bool CanUseSoundEmote() const override;
 
 private:
 	UFUNCTION()
@@ -355,14 +417,37 @@ private:
 	UFUNCTION(Server, Unreliable)
 	void ServerSubmitCarryStruggleInput(int8 Direction);
 
+	UFUNCTION(Server, Unreliable)
+	void ServerSetPhysicsPropInput(float Forward, float Right, float ViewYaw, bool bStraighten);
+
+	UFUNCTION(Server, Unreliable)
+	void ServerSetSpectatorViewRotation(uint16 CompressedPitch, uint16 CompressedYaw);
+
+	UFUNCTION(Server, Reliable)
+	void ServerRequestPhysicsPropJump();
+
+	UFUNCTION()
+	void OnPhysicsPropHit(
+		UPrimitiveComponent* HitComponent,
+		AActor* OtherActor,
+		UPrimitiveComponent* OtherComponent,
+		FVector NormalImpulse,
+		const FHitResult& Hit);
+
+	UFUNCTION(NetMulticast, Reliable)
+	void MulticastPlayPhysicsPropImpactSound(FVector_NetQuantize ImpactLocation);
+
 	UFUNCTION()
 	void OnRep_CaptureState();
 
 	UFUNCTION()
 	void OnRep_CaptureProgress();
 
+	UFUNCTION()
+	void OnRep_MementoState();
+
 	UFUNCTION(Server, Reliable)
-	void ServerRequestPropTransformation();
+	void ServerRequestPropTransformation(APHPropTransformTarget* RequestedTarget);
 
 	UFUNCTION(Server, Reliable)
 	void ServerRequestReturnToInitialForm();
@@ -373,8 +458,17 @@ private:
 	UFUNCTION(Server, Reliable)
 	void ServerRequestStopObjectiveInteraction();
 
+	UFUNCTION(Server, Reliable)
+	void ServerRequestStartExitGateInteraction(APHExitGate* RequestedGate);
+
+	UFUNCTION(Server, Reliable)
+	void ServerRequestStopExitGateInteraction();
+
 	UFUNCTION()
 	void OnRep_TransformationState();
+
+	UFUNCTION()
+	void OnRep_PhysicsBodyRotation();
 
 	UFUNCTION()
 	void OnRep_ActiveObjective();
@@ -399,6 +493,20 @@ private:
 	void SetHumanSprintRequested(bool bRequested);
 	void RequestStopCaptureAssist();
 	void HandleCaptureStruggleAxis(float Value);
+	void StartPhysicsPropStraighten();
+	void StopPhysicsPropStraighten();
+	void SetServerPhysicsPropInput(float Forward, float Right, float ViewYaw, bool bStraighten);
+	void RefreshPhysicsPropMovement();
+	void StopPhysicsPropSimulation();
+	void ApplyPhysicsPropControl(float DeltaSeconds);
+	void ApplyPhysicsPropStraighten(float DeltaSeconds);
+	void TryPhysicsPropJump();
+	bool IsPhysicsPropGrounded() const;
+	bool FindPhysicsPropGround(FHitResult& OutGroundHit) const;
+	void SynchronizeActorToPhysicsProp();
+	void ApplyReplicatedPhysicsPose(float DeltaSeconds = 0.0f);
+	void ResetPhysicsPropPresentation();
+	FPHPhysicsPropPresentationSettings GetPhysicsPropPresentationSettings() const;
 	bool CanUseHumanSprint() const;
 	void UpdateHumanStamina(float DeltaSeconds);
 	void UpdateDownedRecovery(float DeltaSeconds);
@@ -421,10 +529,13 @@ private:
 	FVector GetViewSelectionOrigin() const;
 	bool CanRequestTransformation(double ServerTimeSeconds) const;
 	double GetSafeTransformationCooldownSeconds() const;
-	void PerformAuthoritativeTransformationRequest();
+	void PerformAuthoritativeTransformationRequest(APHPropTransformTarget* RequestedTarget);
 	void PerformAuthoritativeReturnRequest();
+	bool TryReturnToInitialFormFromServer(const TCHAR* Reason);
 	void PublishTransformationResult(EPHPropTransformationResult Result, UPHPropFormDataAsset* ActiveForm);
-	bool TryResolveTransformationTarget(APHPropTransformTarget*& OutTarget, EPHPropTransformationResult& OutFailure) const;
+	bool TryResolveTransformationTarget(APHPropTransformTarget* RequestedTarget, APHPropTransformTarget*& OutTarget, EPHPropTransformationResult& OutFailure) const;
+	bool TryResolvePresentationTransformTarget(APHPropTransformTarget*& OutTarget) const;
+	void RefreshLocalInteractionPresentation();
 	bool TryApplyForm(UPHPropFormDataAsset* NewForm, const APHPropTransformTarget* CopiedTarget, EPHPropTransformationResult& OutFailure);
 	bool TryFindPlacement(const FPHResolvedPropHitbox& Hitbox, float NewCapsuleHalfHeight, const APHPropTransformTarget* CopiedTarget, FVector& OutLocation) const;
 	bool QueryPlacementBlockers(const FPHResolvedPropHitbox& Hitbox, const FVector& ActorLocation, TArray<AActor*>& OutBlockingActors) const;
@@ -432,8 +543,11 @@ private:
 	void ApplyHitbox(const FPHResolvedPropHitbox& Hitbox);
 	void ApplyTransformationState();
 	bool TryResolveObjectiveTarget(APHObjectiveActor*& OutObjective) const;
+	bool TryResolveExitGateTarget(APHExitGate*& OutExitGate) const;
 	void PerformAuthoritativeStartObjectiveInteraction(APHObjectiveActor* RequestedObjective);
+	void PerformAuthoritativeStartExitGateInteraction(APHExitGate* RequestedGate);
 	void PerformAuthoritativeStopObjectiveInteraction();
+	void PerformAuthoritativeStopExitGateInteraction();
 	void RequestSurvivorInteraction();
 	void StopSurvivorInteraction();
 	bool TryResolveRetentionPoint(APHRetentionPoint*& OutRetentionPoint) const;
@@ -449,14 +563,19 @@ private:
 	void SubmitCarryStruggleInput(int8 Direction);
 	void EscapeCarrierWithGrace();
 	void ResetCaptureProgress();
+	void ResetCarryStruggleInputWindow();
 	void SetCaptureState(EPHPropCaptureState NewState, float DurationSeconds = 0.0f);
 	void ApplyCaptureState();
 	void FinishGrace();
 	void FinishRetention();
+	void FinishMemento();
 	void ClearCaptureRelationships();
 
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "PropHunt|Presentation", meta = (AllowPrivateAccess = "true"))
 	TObjectPtr<UCameraComponent> HumanFirstPersonCamera;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "PropHunt|Presentation", meta = (AllowPrivateAccess = "true"))
+	TObjectPtr<USceneComponent> PropPresentationRoot;
 
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "PropHunt|Presentation", meta = (AllowPrivateAccess = "true"))
 	TObjectPtr<USpringArmComponent> CameraBoom;
@@ -466,6 +585,9 @@ private:
 
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "PropHunt|Presentation", meta = (AllowPrivateAccess = "true"))
 	TObjectPtr<UStaticMeshComponent> GrayboxPropBody;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "PropHunt|Physics Prop", meta = (AllowPrivateAccess = "true"))
+	TObjectPtr<UPHPhysicsPropDataAsset> DefaultPhysicsPropDefinition;
 
 	UPROPERTY(EditDefaultsOnly, Category = "PropHunt|Presentation|Human", meta = (AllowPrivateAccess = "true"))
 	TObjectPtr<USkeletalMesh> HumanSkeletalMesh;
@@ -544,6 +666,15 @@ private:
 
 	UPROPERTY(EditDefaultsOnly, Category = "PropHunt|Camera", meta = (ClampMin = "60.0", ClampMax = "120.0", Units = "deg", AllowPrivateAccess = "true"))
 	float CameraFieldOfView;
+
+	UPROPERTY(EditDefaultsOnly, Category = "PropHunt|Camera", meta = (ClampMin = "40.0", ClampMax = "250.0", Units = "cm", AllowPrivateAccess = "true"))
+	float CameraTargetHeight;
+
+	UPROPERTY(EditDefaultsOnly, Category = "PropHunt|Camera", meta = (ClampMin = "5.0", ClampMax = "100.0", Units = "cm", AllowPrivateAccess = "true"))
+	float MinimumCameraGroundClearance;
+
+	UPROPERTY(EditDefaultsOnly, Category = "PropHunt|Camera", meta = (ClampMin = "100.0", ClampMax = "1000.0", Units = "cm", AllowPrivateAccess = "true"))
+	float CameraGroundTraceDepth;
 
 	UPROPERTY(EditDefaultsOnly, Category = "PropHunt|Camera", meta = (AllowPrivateAccess = "true"))
 	FVector CameraSocketOffset;
@@ -626,6 +757,9 @@ private:
 	UPROPERTY(EditDefaultsOnly, Category = "PropHunt|Capture|Recovery", meta = (ClampMin = "1", ClampMax = "4", AllowPrivateAccess = "true"))
 	int32 MaximumRecoveryHelpers;
 
+	UPROPERTY(EditDefaultsOnly, Category = "PropHunt|Capture|Recovery", meta = (ClampMin = "0.0", ClampMax = "0.25", AllowPrivateAccess = "true"))
+	float CarryDropRecoveryBonus;
+
 	UPROPERTY(EditDefaultsOnly, Category = "PropHunt|Capture|Struggle", meta = (ClampMin = "6", ClampMax = "100", AllowPrivateAccess = "true"))
 	int32 CarryStruggleRequiredAlternations;
 
@@ -644,8 +778,26 @@ private:
 	UPROPERTY(ReplicatedUsing = OnRep_TransformationState, VisibleInstanceOnly, BlueprintReadOnly, Category = "PropHunt|Transformation", meta = (AllowPrivateAccess = "true"))
 	FPHPropTransformationState TransformationState;
 
+	UPROPERTY(Replicated, VisibleInstanceOnly, BlueprintReadOnly, Category = "PropHunt|Camera", meta = (AllowPrivateAccess = "true"))
+	FRotator ReplicatedSpectatorViewRotation;
+
+	UPROPERTY(ReplicatedUsing = OnRep_PhysicsBodyRotation, VisibleInstanceOnly, BlueprintReadOnly, Category = "PropHunt|Physics Prop", meta = (AllowPrivateAccess = "true"))
+	FRotator ReplicatedPhysicsBodyRotation;
+
+	UPROPERTY(ReplicatedUsing = OnRep_PhysicsBodyRotation, VisibleInstanceOnly, BlueprintReadOnly, Category = "PropHunt|Physics Prop", meta = (AllowPrivateAccess = "true"))
+	FVector_NetQuantize10 ReplicatedPhysicsBodyLinearVelocity;
+
+	UPROPERTY(ReplicatedUsing = OnRep_PhysicsBodyRotation, VisibleInstanceOnly, BlueprintReadOnly, Category = "PropHunt|Physics Prop", meta = (AllowPrivateAccess = "true"))
+	FVector_NetQuantize10 ReplicatedPhysicsBodyAngularVelocity;
+
+	UPROPERTY(ReplicatedUsing = OnRep_PhysicsBodyRotation, VisibleInstanceOnly, BlueprintReadOnly, Category = "PropHunt|Physics Prop", meta = (AllowPrivateAccess = "true"))
+	bool bReplicatedPhysicsBodyGrounded;
+
 	UPROPERTY(ReplicatedUsing = OnRep_ActiveObjective, VisibleInstanceOnly, BlueprintReadOnly, Category = "PropHunt|Objective", meta = (AllowPrivateAccess = "true"))
 	TObjectPtr<APHObjectiveActor> ActiveObjective;
+
+	UPROPERTY(Replicated, VisibleInstanceOnly, BlueprintReadOnly, Category = "PropHunt|Escape", meta = (AllowPrivateAccess = "true"))
+	TObjectPtr<APHExitGate> ActiveExitGate;
 
 	UPROPERTY(ReplicatedUsing = OnRep_ActiveRetentionRescuePoint, VisibleInstanceOnly, BlueprintReadOnly, Category = "PropHunt|Capture|Rescue", meta = (AllowPrivateAccess = "true"))
 	TObjectPtr<APHRetentionPoint> ActiveRetentionRescuePoint;
@@ -667,6 +819,12 @@ private:
 
 	UPROPERTY(ReplicatedUsing = OnRep_CaptureState, VisibleInstanceOnly, BlueprintReadOnly, Category = "PropHunt|Capture", meta = (AllowPrivateAccess = "true"))
 	TObjectPtr<APHRetentionPoint> RetentionPoint;
+
+	UPROPERTY(ReplicatedUsing = OnRep_MementoState, VisibleInstanceOnly, BlueprintReadOnly, Category = "PropHunt|Memento", meta = (AllowPrivateAccess = "true"))
+	bool bMementoInProgress;
+
+	UPROPERTY(ReplicatedUsing = OnRep_MementoState, VisibleInstanceOnly, BlueprintReadOnly, Category = "PropHunt|Memento", meta = (AllowPrivateAccess = "true"))
+	FVector_NetQuantize MementoImpactPoint;
 
 	UPROPERTY(ReplicatedUsing = OnRep_CaptureProgress, VisibleInstanceOnly, BlueprintReadOnly, Category = "PropHunt|Capture|Recovery", meta = (AllowPrivateAccess = "true"))
 	float DownedRecoveryProgress;
@@ -692,10 +850,33 @@ private:
 	double LastHumanStaminaUseServerTime;
 	double LastLocalStruggleInputTime;
 	double LastServerStruggleInputTime;
+	double LastServerPhysicsPropInputTime;
+	double LastLocalSpectatorViewPublishTime;
+	double LastServerSpectatorViewUpdateTime;
+	double LastPhysicsPropJumpTime;
+	double LastPhysicsPropImpactSoundTime;
 	float NormalWalkSpeed;
+	float LocalPhysicsForwardInput;
+	float LocalPhysicsRightInput;
+	float ServerPhysicsForwardInput;
+	float ServerPhysicsRightInput;
+	float ServerPhysicsViewYaw;
+	FRotator LastPublishedSpectatorViewRotation;
+	float CurrentPhysicsStraightenInterpSpeed;
 	bool bWantsHumanSprint;
+	bool bLocalPhysicsStraightenHeld;
+	bool bServerPhysicsStraightenHeld;
+	bool bPhysicsStraightenWasActive;
+	bool bPhysicsMovementWasActive;
+	bool bPhysicsWasGrounded;
+	int32 PhysicsJumpsUsed;
 	bool bPlayingWalkAnimation;
 	bool bCurrentHumanAnimationFrozen;
+	bool bLocallySpectated = false;
+	FRotator SmoothedSpectatorViewRotation = FRotator::ZeroRotator;
+	FPHPhysicsPropPresentationState PhysicsPropPresentationState;
+	FText CachedPrimaryInteractionPrompt;
+	TWeakObjectPtr<APHPropTransformTarget> HighlightedTransformTarget;
 
 	UPROPERTY(Transient)
 	TObjectPtr<UAnimSequence> CurrentHumanAnimation;
@@ -710,4 +891,5 @@ private:
 
 	TSet<TWeakObjectPtr<APHPropCharacter>> RecoveryHelpers;
 	FTimerHandle CaptureStateTimerHandle;
+	FTimerHandle MementoTimerHandle;
 };

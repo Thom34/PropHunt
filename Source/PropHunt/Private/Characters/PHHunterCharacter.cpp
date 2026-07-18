@@ -17,6 +17,7 @@
 #include "GameFramework/SpringArmComponent.h"
 #include "Gameplay/PHCollisionChannels.h"
 #include "Gameplay/Capture/PHRetentionPoint.h"
+#include "Gameplay/Objectives/PHObjectiveActor.h"
 #include "Net/UnrealNetwork.h"
 #include "UObject/ConstructorHelpers.h"
 
@@ -40,6 +41,10 @@ APHHunterCharacter::APHHunterCharacter()
 	, CarryAnchorOffset(FVector::ZeroVector)
 	, CarryAnchorRotation(FRotator::ZeroRotator)
 	, CarryStruggleShoveDuration(0.35f)
+	, MementoMinimumRetentionCount(2)
+	, MementoWallSearchDistance(1200.0f)
+	, MementoLaunchSpeed(1400.0f)
+	, MementoUpwardVelocity(220.0f)
 	, CarriedProp(nullptr)
 	, LastLocalMeleeRequestTime(-DBL_MAX)
 	, LastServerMeleeAttackTime(-DBL_MAX)
@@ -187,6 +192,7 @@ void APHHunterCharacter::SetupPlayerInputComponent(UInputComponent* PlayerInputC
 
 	PlayerInputComponent->BindAction(TEXT("MeleeAttack"), IE_Pressed, this, &APHHunterCharacter::RequestMeleeAttack);
 	PlayerInputComponent->BindAction(TEXT("HunterInteract"), IE_Pressed, this, &APHHunterCharacter::RequestCaptureInteraction);
+	PlayerInputComponent->BindAction(TEXT("Memento"), IE_Pressed, this, &APHHunterCharacter::RequestMemento);
 }
 
 void APHHunterCharacter::RequestMeleeAttack()
@@ -253,6 +259,25 @@ void APHHunterCharacter::RequestCaptureInteraction()
 	}
 }
 
+void APHHunterCharacter::RequestMemento()
+{
+	if (!IsLocallyControlled() || CarriedProp != nullptr)
+	{
+		return;
+	}
+
+	APHPropCharacter* RequestedProp = nullptr;
+	TryResolveDownedProp(RequestedProp);
+	if (HasAuthority())
+	{
+		PerformAuthoritativeMemento(RequestedProp);
+	}
+	else
+	{
+		ServerRequestMemento(RequestedProp);
+	}
+}
+
 void APHHunterCharacter::ClearCarriedProp(const APHPropCharacter* ExpectedProp)
 {
 	if (!HasAuthority() || CarriedProp == nullptr || CarriedProp != ExpectedProp)
@@ -287,6 +312,11 @@ void APHHunterCharacter::ServerRequestCaptureInteraction_Implementation(
 	APHRetentionPoint* RequestedPoint)
 {
 	PerformAuthoritativeCaptureInteraction(RequestedProp, RequestedPoint);
+}
+
+void APHHunterCharacter::ServerRequestMemento_Implementation(APHPropCharacter* RequestedProp)
+{
+	PerformAuthoritativeMemento(RequestedProp);
 }
 
 void APHHunterCharacter::OnRep_MeleeAttackState()
@@ -591,11 +621,37 @@ void APHHunterCharacter::PerformAuthoritativeMeleeAttack()
 		HitProp->ReceiveAuthoritativeMeleeHit(*this);
 	}
 
+	APHObjectiveActor* HitObjective = nullptr;
+	if (HitProp == nullptr)
+	{
+		FHitResult ObjectiveHit;
+		FCollisionQueryParams ObjectiveQueryParams(SCENE_QUERY_STAT(PHMeleeObjective), false, this);
+		ObjectiveQueryParams.AddIgnoredActor(this);
+		if (World->LineTraceSingleByChannel(
+			ObjectiveHit,
+			TraceStart,
+			TraceEnd,
+			ECC_Visibility,
+			ObjectiveQueryParams))
+		{
+			if (APHObjectiveActor* CandidateObjective = Cast<APHObjectiveActor>(ObjectiveHit.GetActor());
+				CandidateObjective != nullptr
+				&& CandidateObjective->ServerApplyHunterMeleeRegression(*this))
+			{
+				HitObjective = CandidateObjective;
+			}
+		}
+	}
+
 	if (bDrawMeleeDebug)
 	{
 		const FVector DebugExtent(5.0f, SafeWidth * 0.5f, SafeVerticalTolerance);
 		const FQuat DebugRotation = Controller->GetControlRotation().Quaternion();
-		const FColor DebugColor = HitProp != nullptr ? FColor::Green : FColor::Red;
+		const FColor DebugColor = HitProp != nullptr
+			? FColor::Green
+			: HitObjective != nullptr
+			? FColor::Yellow
+			: FColor::Red;
 		for (int32 SampleIndex = 0; SampleIndex <= 8; ++SampleIndex)
 		{
 			const float Alpha = static_cast<float>(SampleIndex) / 8.0f;
@@ -613,8 +669,8 @@ void APHHunterCharacter::PerformAuthoritativeMeleeAttack()
 
 	UE_LOG(LogPHMelee, Log, TEXT("Authoritative melee attack %d: %s%s"),
 		MeleeAttackState.Sequence,
-		HitProp != nullptr ? TEXT("hit ") : TEXT("miss"),
-		HitProp != nullptr ? *HitProp->GetName() : TEXT(""));
+		HitProp != nullptr ? TEXT("hit prop ") : HitObjective != nullptr ? TEXT("regressed objective ") : TEXT("miss"),
+		HitProp != nullptr ? *HitProp->GetName() : HitObjective != nullptr ? *HitObjective->GetName() : TEXT(""));
 }
 
 bool APHHunterCharacter::TryResolveDownedProp(APHPropCharacter*& OutProp) const
@@ -732,6 +788,90 @@ bool APHHunterCharacter::IsNearAvailableRetentionPoint() const
 		}
 	}
 	return false;
+}
+
+bool APHHunterCharacter::TryResolveMementoWall(
+	const APHPropCharacter& Target,
+	FVector& OutImpactPoint) const
+{
+	const UWorld* World = GetWorld();
+	if (World == nullptr || Controller == nullptr)
+	{
+		return false;
+	}
+
+	const FVector TraceStart = Target.GetActorLocation() + FVector::UpVector * 55.0f;
+	const float SafeDistance = FMath::Clamp(MementoWallSearchDistance, 300.0f, 2000.0f);
+	const float BaseYaw = Controller->GetControlRotation().Yaw;
+	const float SearchYawOffsets[] = { 0.0f, -20.0f, 20.0f, -40.0f, 40.0f };
+	FCollisionQueryParams QueryParams(SCENE_QUERY_STAT(PHMementoWall), false, this);
+	QueryParams.AddIgnoredActor(this);
+	QueryParams.AddIgnoredActor(&Target);
+	for (const float YawOffset : SearchYawOffsets)
+	{
+		const FVector Direction = FRotator(0.0f, BaseYaw + YawOffset, 0.0f).Vector();
+		FHitResult WallHit;
+		if (World->LineTraceSingleByChannel(
+			WallHit,
+			TraceStart,
+			TraceStart + Direction * SafeDistance,
+			ECC_Visibility,
+			QueryParams)
+			&& FMath::Abs(WallHit.ImpactNormal.Z) <= 0.70f)
+		{
+			OutImpactPoint = WallHit.ImpactPoint;
+			return true;
+		}
+	}
+	return false;
+}
+
+void APHHunterCharacter::PerformAuthoritativeMemento(APHPropCharacter* RequestedProp)
+{
+	const APHPlayerState* HunterState = GetPlayerState<APHPlayerState>();
+	const APHGameState* GameState = GetWorld() != nullptr ? GetWorld()->GetGameState<APHGameState>() : nullptr;
+	const EPHMatchPhase Phase = GameState != nullptr ? GameState->GetMatchPhase() : EPHMatchPhase::Lobby;
+	if (!HasAuthority() || RequestedProp == nullptr || HunterState == nullptr
+		|| HunterState->GetPlayerRole() != EPHPlayerRole::Hunter
+		|| (Phase != EPHMatchPhase::Hunt && Phase != EPHMatchPhase::Escape)
+		|| RequestedProp->GetCaptureState() != EPHPropCaptureState::Downed
+		|| RequestedProp->IsMementoInProgress()
+		|| RequestedProp->GetRetentionCount() < FMath::Clamp(MementoMinimumRetentionCount, 0, 3))
+	{
+		return;
+	}
+
+	const float SafeInteractionDistance = FMath::Clamp(CaptureInteractionDistance, 100.0f, 500.0f);
+	const FVector TargetPoint = RequestedProp->GetMeleeLineOfSightPoint(GetActorLocation());
+	if (FVector::DistSquared(GetActorLocation(), RequestedProp->GetActorLocation())
+		> FMath::Square(SafeInteractionDistance)
+		|| !HasCaptureLineOfSight(*RequestedProp, TargetPoint))
+	{
+		return;
+	}
+
+	FVector WallImpactPoint = FVector::ZeroVector;
+	if (!TryResolveMementoWall(*RequestedProp, WallImpactPoint))
+	{
+		UE_LOG(LogPHMelee, Log, TEXT("Memento refused for %s: no valid wall in the Hunter aim cone."),
+			*RequestedProp->GetName());
+		return;
+	}
+
+	const FVector ToWall = WallImpactPoint - RequestedProp->GetActorLocation();
+	const FVector HorizontalDirection(ToWall.X, ToWall.Y, 0.0f);
+	const float SafeLaunchSpeed = FMath::Clamp(MementoLaunchSpeed, 300.0f, 2500.0f);
+	const FVector LaunchVelocity = HorizontalDirection.GetSafeNormal() * SafeLaunchSpeed
+		+ FVector::UpVector * FMath::Clamp(MementoUpwardVelocity, 0.0f, 800.0f);
+	const float FlightDuration = FMath::Clamp(
+		HorizontalDirection.Size() / SafeLaunchSpeed + 0.45f,
+		0.5f,
+		2.5f);
+	if (RequestedProp->ServerStartMemento(WallImpactPoint, LaunchVelocity, FlightDuration))
+	{
+		UE_LOG(LogPHMelee, Log, TEXT("Hunter %s started a wall memento on %s toward %s."),
+			*GetName(), *RequestedProp->GetName(), *WallImpactPoint.ToCompactString());
+	}
 }
 
 void APHHunterCharacter::PerformAuthoritativeCaptureInteraction(

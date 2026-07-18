@@ -56,14 +56,14 @@ APHRetentionPoint::APHRetentionPoint()
 	FrontLabel->SetRelativeRotation(FRotator(0.0f, 180.0f, 0.0f));
 	FrontLabel->SetHorizontalAlignment(EHTA_Center);
 	FrontLabel->SetWorldSize(32.0f);
-	FrontLabel->SetText(FText::FromString(TEXT("PIQUET - CLIC")));
+	FrontLabel->SetText(FText::FromString(TEXT("PIQUET\nE : ACCROCHER | CLIC : LIBERER")));
 
 	BackLabel = CreateDefaultSubobject<UTextRenderComponent>(TEXT("BackLabel"));
 	BackLabel->SetupAttachment(SceneRoot);
 	BackLabel->SetRelativeLocation(FVector(45.0f, 0.0f, 250.0f));
 	BackLabel->SetHorizontalAlignment(EHTA_Center);
 	BackLabel->SetWorldSize(32.0f);
-	BackLabel->SetText(FText::FromString(TEXT("PIQUET - CLIC")));
+	BackLabel->SetText(FText::FromString(TEXT("PIQUET\nE : ACCROCHER | CLIC : LIBERER")));
 
 	RetentionAnchor = CreateDefaultSubobject<USceneComponent>(TEXT("RetentionAnchor"));
 	RetentionAnchor->SetupAttachment(SceneRoot);
@@ -164,6 +164,10 @@ bool APHRetentionPoint::ServerTryRetain(APHHunterCharacter& Hunter, APHPropChara
 	OnRep_RetainedProp();
 	ForceNetUpdate();
 	Prop.ServerRetainAt(*this);
+	if (APHPlayerState* HunterState = Hunter.GetPlayerState<APHPlayerState>())
+	{
+		HunterState->RecordHunterRetention();
+	}
 	UE_LOG(LogPHRetention, Log, TEXT("%s retained %s at %s."),
 		*Hunter.GetName(), *Prop.GetName(), *GetName());
 	return true;
@@ -257,6 +261,10 @@ void APHRetentionPoint::CompleteRelease()
 	OnRep_RetainedProp();
 	ForceNetUpdate();
 	ReleasedProp->ServerReleaseWithGrace();
+	if (APHPlayerState* RescuerState = Rescuer->GetPlayerState<APHPlayerState>())
+	{
+		RescuerState->RecordAllyRescue();
+	}
 	UE_LOG(LogPHRetention, Log, TEXT("%s released %s from %s after %.1fs."),
 		*Rescuer->GetName(), *ReleasedProp->GetName(), *GetName(), ReleaseDuration);
 }

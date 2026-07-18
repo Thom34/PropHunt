@@ -69,6 +69,15 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "PropHunt|Capture")
 	void RequestCaptureInteraction();
 
+	UFUNCTION(BlueprintCallable, Category = "PropHunt|Memento")
+	void RequestMemento();
+
+	UFUNCTION(BlueprintPure, Category = "PropHunt|Memento")
+	int32 GetMementoMinimumRetentionCount() const { return MementoMinimumRetentionCount; }
+
+	UFUNCTION(BlueprintPure, Category = "PropHunt|Memento")
+	float GetMementoWallSearchDistance() const { return MementoWallSearchDistance; }
+
 	UFUNCTION(BlueprintPure, Category = "PropHunt|Capture")
 	APHPropCharacter* GetCarriedProp() const { return CarriedProp; }
 
@@ -114,6 +123,9 @@ private:
 	UFUNCTION(Server, Reliable)
 	void ServerRequestCaptureInteraction(APHPropCharacter* RequestedProp, APHRetentionPoint* RequestedPoint);
 
+	UFUNCTION(Server, Reliable)
+	void ServerRequestMemento(APHPropCharacter* RequestedProp);
+
 	UFUNCTION()
 	void OnRep_CarriedProp();
 
@@ -124,6 +136,8 @@ private:
 	bool TryResolveRetentionPoint(APHRetentionPoint*& OutPoint) const;
 	bool IsNearAvailableRetentionPoint() const;
 	void PerformAuthoritativeCaptureInteraction(APHPropCharacter* RequestedProp, APHRetentionPoint* RequestedPoint);
+	void PerformAuthoritativeMemento(APHPropCharacter* RequestedProp);
+	bool TryResolveMementoWall(const APHPropCharacter& Target, FVector& OutImpactPoint) const;
 	bool HasCaptureLineOfSight(const AActor& Target, const FVector& TargetPoint) const;
 	void ConfigureHumanPresentation();
 	void UpdateLocomotionPresentation();
@@ -221,6 +235,18 @@ private:
 
 	UPROPERTY(EditDefaultsOnly, Category = "PropHunt|Capture|Struggle", meta = (ClampMin = "0.1", ClampMax = "1.0", Units = "s", AllowPrivateAccess = "true"))
 	float CarryStruggleShoveDuration;
+
+	UPROPERTY(EditDefaultsOnly, Category = "PropHunt|Memento", meta = (ClampMin = "0", ClampMax = "3", AllowPrivateAccess = "true"))
+	int32 MementoMinimumRetentionCount;
+
+	UPROPERTY(EditDefaultsOnly, Category = "PropHunt|Memento", meta = (ClampMin = "300.0", ClampMax = "2000.0", Units = "cm", AllowPrivateAccess = "true"))
+	float MementoWallSearchDistance;
+
+	UPROPERTY(EditDefaultsOnly, Category = "PropHunt|Memento", meta = (ClampMin = "300.0", ClampMax = "2500.0", Units = "cm/s", AllowPrivateAccess = "true"))
+	float MementoLaunchSpeed;
+
+	UPROPERTY(EditDefaultsOnly, Category = "PropHunt|Memento", meta = (ClampMin = "0.0", ClampMax = "800.0", Units = "cm/s", AllowPrivateAccess = "true"))
+	float MementoUpwardVelocity;
 
 	UPROPERTY(ReplicatedUsing = OnRep_MeleeAttackState, VisibleInstanceOnly, BlueprintReadOnly, Category = "PropHunt|Melee", meta = (AllowPrivateAccess = "true"))
 	FPHMeleeAttackState MeleeAttackState;

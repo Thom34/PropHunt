@@ -3,16 +3,20 @@
 #include "Animation/AnimSequence.h"
 #include "Camera/CameraComponent.h"
 #include "Characters/PHHunterCharacter.h"
+#include "Components/AudioComponent.h"
 #include "Components/BoxComponent.h"
 #include "Components/CapsuleComponent.h"
 #include "Components/InputComponent.h"
 #include "Components/PrimitiveComponent.h"
+#include "Components/SceneComponent.h"
 #include "Components/SkeletalMeshComponent.h"
 #include "Components/StaticMeshComponent.h"
 #include "EngineUtils.h"
 #include "Engine/OverlapResult.h"
 #include "Engine/World.h"
+#include "Game/PHGameMode.h"
 #include "Game/PHGameState.h"
+#include "Game/PHPlayerController.h"
 #include "Game/PHPlayerState.h"
 #include "GameFramework/CharacterMovementComponent.h"
 #include "GameFramework/Controller.h"
@@ -20,14 +24,21 @@
 #include "Gameplay/PHCollisionChannels.h"
 #include "Gameplay/Capture/PHRetentionPoint.h"
 #include "Gameplay/Characters/PHHumanPrototypeSelector.h"
+#include "Gameplay/Escape/PHExitGate.h"
 #include "Gameplay/Objectives/PHObjectiveActor.h"
+#include "Gameplay/Physics/PHPhysicsPropDataAsset.h"
 #include "Gameplay/Transformation/PHPropFormDataAsset.h"
 #include "Gameplay/Transformation/PHPropTransformTarget.h"
+#include "Kismet/GameplayStatics.h"
+#include "Materials/MaterialInterface.h"
 #include "Net/UnrealNetwork.h"
+#include "PhysicsEngine/BodyInstance.h"
 #include "TimerManager.h"
 #include "UObject/ConstructorHelpers.h"
 
 DEFINE_LOG_CATEGORY_STATIC(LogPHTransformation, Log, All);
+DEFINE_LOG_CATEGORY_STATIC(LogPHCapture, Log, All);
+DEFINE_LOG_CATEGORY_STATIC(LogPHPhysicsProp, Log, All);
 
 APHPropCharacter::APHPropCharacter()
 	: PrimaryHumanPrototypeName(TEXT("Isaac"))
@@ -40,7 +51,10 @@ APHPropCharacter::APHPropCharacter()
 	, CameraArmLength(300.0f)
 	, CameraCollisionProbeSize(12.0f)
 	, CameraFieldOfView(90.0f)
-	, CameraSocketOffset(0.0f, 45.0f, 35.0f)
+	, CameraTargetHeight(95.0f)
+	, MinimumCameraGroundClearance(30.0f)
+	, CameraGroundTraceDepth(500.0f)
+	, CameraSocketOffset(0.0f, 45.0f, 0.0f)
 	, HumanFirstPersonCameraOffset(0.0f, 0.0f, 64.0f)
 	, MaximumHumanStamina(100.0f)
 	, HumanSprintSpeed(700.0f)
@@ -48,7 +62,7 @@ APHPropCharacter::APHPropCharacter()
 	, HumanStaminaRechargePerSecond(15.0f)
 	, HumanStaminaRechargeDelay(0.75f)
 	, HumanJumpStaminaCost(20.0f)
-	, TransformationDistance(400.0f)
+	, TransformationDistance(250.0f)
 	, TransformationCooldownSeconds(1.0f)
 	, TransformationSearchDistance(3000.0f)
 	, TransformationTargetingHalfAngleDegrees(12.0f)
@@ -57,8 +71,8 @@ APHPropCharacter::APHPropCharacter()
 	, ObjectiveSearchDistance(1500.0f)
 	, ObjectiveTargetingHalfAngleDegrees(15.0f)
 	, CaptureInteractionDistance(225.0f)
-	, FirstRetentionDuration(30.0f)
-	, SecondRetentionDuration(20.0f)
+	, FirstRetentionDuration(60.0f)
+	, SecondRetentionDuration(60.0f)
 	, MaximumRetentionCount(3)
 	, GraceDuration(5.0f)
 	, GraceSpeedMultiplier(1.25f)
@@ -66,17 +80,25 @@ APHPropCharacter::APHPropCharacter()
 	, DownedRecoveryDuration(30.0f)
 	, AdditionalRecoveryContributionPerHelper(0.75f)
 	, MaximumRecoveryHelpers(3)
-	, CarryStruggleRequiredAlternations(24)
+	, CarryDropRecoveryBonus(0.05f)
+	, CarryStruggleRequiredAlternations(72)
 	, CarryStruggleMinimumInputInterval(0.08f)
 	, CarryStruggleShoveProgressInterval(0.20f)
 	, CarryStruggleHunterShoveDistance(90.0f)
 	, MeleeHitSequence(0)
+	, ReplicatedSpectatorViewRotation(FRotator::ZeroRotator)
+	, ReplicatedPhysicsBodyRotation(FRotator::ZeroRotator)
+	, ReplicatedPhysicsBodyLinearVelocity(FVector::ZeroVector)
+	, ReplicatedPhysicsBodyAngularVelocity(FVector::ZeroVector)
+	, bReplicatedPhysicsBodyGrounded(false)
 	, CurrentHumanStamina(100.0f)
 	, CaptureState(EPHPropCaptureState::Free)
 	, RetentionCount(0)
 	, CaptureStateEndServerTime(0.0f)
 	, Carrier(nullptr)
 	, RetentionPoint(nullptr)
+	, bMementoInProgress(false)
+	, MementoImpactPoint(FVector::ZeroVector)
 	, DownedRecoveryProgress(0.0f)
 	, RecoveryHelperCount(0)
 	, CarryStruggleProgress(0.0f)
@@ -91,8 +113,26 @@ APHPropCharacter::APHPropCharacter()
 	, LastHumanStaminaUseServerTime(-DBL_MAX)
 	, LastLocalStruggleInputTime(-DBL_MAX)
 	, LastServerStruggleInputTime(-DBL_MAX)
+	, LastServerPhysicsPropInputTime(-DBL_MAX)
+	, LastLocalSpectatorViewPublishTime(-DBL_MAX)
+	, LastServerSpectatorViewUpdateTime(-DBL_MAX)
+	, LastPhysicsPropJumpTime(-DBL_MAX)
+	, LastPhysicsPropImpactSoundTime(-DBL_MAX)
 	, NormalWalkSpeed(500.0f)
+	, LocalPhysicsForwardInput(0.0f)
+	, LocalPhysicsRightInput(0.0f)
+	, ServerPhysicsForwardInput(0.0f)
+	, ServerPhysicsRightInput(0.0f)
+	, ServerPhysicsViewYaw(0.0f)
+	, LastPublishedSpectatorViewRotation(FRotator::ZeroRotator)
+	, CurrentPhysicsStraightenInterpSpeed(0.0f)
 	, bWantsHumanSprint(false)
+	, bLocalPhysicsStraightenHeld(false)
+	, bServerPhysicsStraightenHeld(false)
+	, bPhysicsStraightenWasActive(false)
+	, bPhysicsMovementWasActive(false)
+	, bPhysicsWasGrounded(false)
+	, PhysicsJumpsUsed(0)
 	, bPlayingWalkAnimation(false)
 	, bCurrentHumanAnimationFrozen(false)
 	, CurrentHumanAnimation(nullptr)
@@ -121,8 +161,11 @@ APHPropCharacter::APHPropCharacter()
 	HumanFirstPersonCamera->bUsePawnControlRotation = true;
 	HumanFirstPersonCamera->SetAutoActivate(true);
 
+	PropPresentationRoot = CreateDefaultSubobject<USceneComponent>(TEXT("PropPresentationRoot"));
+	PropPresentationRoot->SetupAttachment(GetCapsuleComponent());
+
 	CameraBoom = CreateDefaultSubobject<USpringArmComponent>(TEXT("CameraBoom"));
-	CameraBoom->SetupAttachment(GetCapsuleComponent());
+	CameraBoom->SetupAttachment(PropPresentationRoot);
 	CameraBoom->bUsePawnControlRotation = true;
 	CameraBoom->bDoCollisionTest = true;
 	CameraBoom->ProbeChannel = ECC_Camera;
@@ -136,15 +179,25 @@ APHPropCharacter::APHPropCharacter()
 	ThirdPersonCamera->bUsePawnControlRotation = false;
 	ThirdPersonCamera->SetAutoActivate(false);
 
+	static ConstructorHelpers::FObjectFinder<UMaterialInterface> InteractionOutlineMaterial(
+		TEXT("/Game/PropHunt/UI/Materials/M_PH_InteractableOutline_PP_V2.M_PH_InteractableOutline_PP_V2"));
+	if (InteractionOutlineMaterial.Succeeded())
+	{
+		HumanFirstPersonCamera->PostProcessSettings.AddBlendable(InteractionOutlineMaterial.Object, 1.0f);
+		ThirdPersonCamera->PostProcessSettings.AddBlendable(InteractionOutlineMaterial.Object, 1.0f);
+	}
+
 	GrayboxPropBody = CreateDefaultSubobject<UStaticMeshComponent>(TEXT("GrayboxPropBody"));
-	GrayboxPropBody->SetupAttachment(GetCapsuleComponent());
+	GrayboxPropBody->SetupAttachment(PropPresentationRoot);
 	GrayboxPropBody->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+	GrayboxPropBody->SetNotifyRigidBodyCollision(true);
 	GrayboxPropBody->SetCanEverAffectNavigation(false);
+	GrayboxPropBody->OnComponentHit.AddDynamic(this, &APHPropCharacter::OnPhysicsPropHit);
 	GrayboxPropBody->SetRelativeLocation(FVector(0.0f, 0.0f, -8.0f));
 	GrayboxPropBody->SetRelativeScale3D(FVector(0.65f, 0.65f, 0.90f));
 
 	PropBoxHitbox = CreateDefaultSubobject<UBoxComponent>(TEXT("PropBoxHitbox"));
-	PropBoxHitbox->SetupAttachment(GetCapsuleComponent());
+	PropBoxHitbox->SetupAttachment(PropPresentationRoot);
 	PropBoxHitbox->InitBoxExtent(FVector(40.0f, 40.0f, 60.0f));
 	PropBoxHitbox->SetCollisionEnabled(ECollisionEnabled::NoCollision);
 	PropBoxHitbox->SetCollisionObjectType(PHCollision::PropHitbox);
@@ -155,7 +208,7 @@ APHPropCharacter::APHPropCharacter()
 	PropBoxHitbox->CanCharacterStepUpOn = ECB_No;
 
 	PropCapsuleHitbox = CreateDefaultSubobject<UCapsuleComponent>(TEXT("PropCapsuleHitbox"));
-	PropCapsuleHitbox->SetupAttachment(GetCapsuleComponent());
+	PropCapsuleHitbox->SetupAttachment(PropPresentationRoot);
 	PropCapsuleHitbox->InitCapsuleSize(40.0f, 60.0f);
 	PropCapsuleHitbox->SetCollisionEnabled(ECollisionEnabled::QueryOnly);
 	PropCapsuleHitbox->SetCollisionObjectType(PHCollision::PropHitbox);
@@ -170,6 +223,13 @@ APHPropCharacter::APHPropCharacter()
 	{
 		GrayboxPropBody->SetStaticMesh(CubeMesh.Object);
 	}
+
+	static ConstructorHelpers::FObjectFinder<UPHPhysicsPropDataAsset> DefaultPhysicsAsset(
+		TEXT("/Game/PropHunt/Data/Physics/DA_PH_PhysicsProp_ScreamingChicken.DA_PH_PhysicsProp_ScreamingChicken"));
+	if (DefaultPhysicsAsset.Succeeded())
+	{
+		DefaultPhysicsPropDefinition = DefaultPhysicsAsset.Object;
+	}
 }
 
 void APHPropCharacter::GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& OutLifetimeProps) const
@@ -178,7 +238,13 @@ void APHPropCharacter::GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& Out
 
 	DOREPLIFETIME(APHPropCharacter, MeleeHitSequence);
 	DOREPLIFETIME(APHPropCharacter, TransformationState);
+	DOREPLIFETIME_CONDITION(APHPropCharacter, ReplicatedSpectatorViewRotation, COND_SkipOwner);
+	DOREPLIFETIME(APHPropCharacter, ReplicatedPhysicsBodyRotation);
+	DOREPLIFETIME(APHPropCharacter, ReplicatedPhysicsBodyLinearVelocity);
+	DOREPLIFETIME(APHPropCharacter, ReplicatedPhysicsBodyAngularVelocity);
+	DOREPLIFETIME(APHPropCharacter, bReplicatedPhysicsBodyGrounded);
 	DOREPLIFETIME(APHPropCharacter, ActiveObjective);
+	DOREPLIFETIME(APHPropCharacter, ActiveExitGate);
 	DOREPLIFETIME(APHPropCharacter, ActiveRetentionRescuePoint);
 	DOREPLIFETIME_CONDITION(APHPropCharacter, CurrentHumanStamina, COND_OwnerOnly);
 	DOREPLIFETIME(APHPropCharacter, CaptureState);
@@ -186,6 +252,8 @@ void APHPropCharacter::GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& Out
 	DOREPLIFETIME(APHPropCharacter, CaptureStateEndServerTime);
 	DOREPLIFETIME(APHPropCharacter, Carrier);
 	DOREPLIFETIME(APHPropCharacter, RetentionPoint);
+	DOREPLIFETIME(APHPropCharacter, bMementoInProgress);
+	DOREPLIFETIME(APHPropCharacter, MementoImpactPoint);
 	DOREPLIFETIME(APHPropCharacter, DownedRecoveryProgress);
 	DOREPLIFETIME(APHPropCharacter, RecoveryHelperCount);
 	DOREPLIFETIME(APHPropCharacter, CarryStruggleProgress);
@@ -219,6 +287,7 @@ void APHPropCharacter::PostInitializeComponents()
 
 	CameraBoom->TargetArmLength = CameraArmLength;
 	CameraBoom->ProbeSize = CameraCollisionProbeSize;
+	CameraBoom->TargetOffset = FVector(0.0f, 0.0f, CameraTargetHeight);
 	CameraBoom->SocketOffset = CameraSocketOffset;
 	HumanFirstPersonCamera->SetRelativeLocation(HumanFirstPersonCameraOffset);
 	HumanFirstPersonCamera->SetFieldOfView(CameraFieldOfView);
@@ -258,16 +327,84 @@ void APHPropCharacter::BeginPlay()
 void APHPropCharacter::Tick(const float DeltaSeconds)
 {
 	Super::Tick(DeltaSeconds);
+	if (IsLocallyControlled() && Controller != nullptr)
+	{
+		const FRotator CurrentViewRotation = Controller->GetControlRotation().GetNormalized();
+		if (HasAuthority())
+		{
+			ReplicatedSpectatorViewRotation = CurrentViewRotation;
+		}
+		else if (GetWorld() != nullptr)
+		{
+			const double Now = GetWorld()->GetTimeSeconds();
+			const bool bPublishIntervalElapsed = Now - LastLocalSpectatorViewPublishTime >= 0.05;
+			const bool bViewChanged = !LastPublishedSpectatorViewRotation.Equals(CurrentViewRotation, 0.25f);
+			const bool bKeepAliveElapsed = Now - LastLocalSpectatorViewPublishTime >= 0.25;
+			if (bPublishIntervalElapsed && (bViewChanged || bKeepAliveElapsed))
+			{
+				ServerSetSpectatorViewRotation(
+					FRotator::CompressAxisToShort(CurrentViewRotation.Pitch),
+					FRotator::CompressAxisToShort(CurrentViewRotation.Yaw));
+				LastPublishedSpectatorViewRotation = CurrentViewRotation;
+				LastLocalSpectatorViewPublishTime = Now;
+			}
+		}
+	}
+	else if (bLocallySpectated)
+	{
+		SmoothedSpectatorViewRotation = FMath::RInterpTo(
+			SmoothedSpectatorViewRotation,
+			ReplicatedSpectatorViewRotation,
+			DeltaSeconds,
+			20.0f);
+	}
+	if (IsLocallyControlled())
+	{
+		RefreshLocalInteractionPresentation();
+	}
+	if (IsLocallyControlled() && IsUsingPhysicsPropMovement())
+	{
+		const float ViewYaw = Controller != nullptr ? Controller->GetControlRotation().Yaw : GetActorRotation().Yaw;
+		if (HasAuthority())
+		{
+			SetServerPhysicsPropInput(LocalPhysicsForwardInput, LocalPhysicsRightInput, ViewYaw, bLocalPhysicsStraightenHeld);
+		}
+		else
+		{
+			ServerSetPhysicsPropInput(LocalPhysicsForwardInput, LocalPhysicsRightInput, ViewYaw, bLocalPhysicsStraightenHeld);
+		}
+	}
 	if (HasAuthority())
 	{
+		if (IsUsingPhysicsPropMovement())
+		{
+			if (!IsLocallyControlled() && GetWorld() != nullptr
+				&& GetWorld()->GetTimeSeconds() - LastServerPhysicsPropInputTime > 0.25)
+			{
+				ServerPhysicsForwardInput = 0.0f;
+				ServerPhysicsRightInput = 0.0f;
+				bServerPhysicsStraightenHeld = false;
+			}
+			ApplyPhysicsPropControl(DeltaSeconds);
+			SynchronizeActorToPhysicsProp();
+		}
 		UpdateHumanStamina(DeltaSeconds);
 		UpdateDownedRecovery(DeltaSeconds);
+	}
+	else if (IsUsingPhysicsPropMovement())
+	{
+		ApplyReplicatedPhysicsPose(DeltaSeconds);
 	}
 	UpdateLocomotionPresentation();
 }
 
 void APHPropCharacter::EndPlay(const EEndPlayReason::Type EndPlayReason)
 {
+	if (HighlightedTransformTarget.IsValid())
+	{
+		HighlightedTransformTarget->SetLocallyHighlighted(false);
+		HighlightedTransformTarget.Reset();
+	}
 	if (HasAuthority())
 	{
 		PerformAuthoritativeStopObjectiveInteraction();
@@ -291,11 +428,14 @@ void APHPropCharacter::SetupPlayerInputComponent(UInputComponent* PlayerInputCom
 	PlayerInputComponent->BindAction(TEXT("SprintHuman"), IE_Pressed, this, &APHPropCharacter::StartHumanSprint);
 	PlayerInputComponent->BindAction(TEXT("SprintHuman"), IE_Released, this, &APHPropCharacter::StopHumanSprint);
 	PlayerInputComponent->BindAction(TEXT("SwitchHumanPrototype"), IE_Pressed, this, &APHPropCharacter::RequestSwitchHumanPrototype);
+	PlayerInputComponent->BindAction(TEXT("StraightenProp"), IE_Pressed, this, &APHPropCharacter::StartPhysicsPropStraighten);
+	PlayerInputComponent->BindAction(TEXT("StraightenProp"), IE_Released, this, &APHPropCharacter::StopPhysicsPropStraighten);
 }
 
 bool APHPropCharacter::IsMoveInputIgnored() const
 {
 	return Super::IsMoveInputIgnored()
+		|| bMementoInProgress
 		|| (CaptureState != EPHPropCaptureState::Free
 			&& CaptureState != EPHPropCaptureState::Grace
 			&& CaptureState != EPHPropCaptureState::Downed);
@@ -316,6 +456,59 @@ void APHPropCharacter::Landed(const FHitResult& Hit)
 	}
 }
 
+FRotator APHPropCharacter::GetViewRotation() const
+{
+	if (bLocallySpectated && !IsLocallyControlled())
+	{
+		return SmoothedSpectatorViewRotation;
+	}
+
+	return Super::GetViewRotation();
+}
+
+void APHPropCharacter::CalcCamera(const float DeltaTime, FMinimalViewInfo& OutResult)
+{
+	Super::CalcCamera(DeltaTime, OutResult);
+	if (bLocallySpectated)
+	{
+		// A dead client follows the survivor's replicated aim instead of forcing
+		// an unrelated third-person fallback camera. This changes presentation
+		// only: the spectator controller remains unpossessed and input-locked.
+		OutResult.Rotation = GetViewRotation();
+	}
+
+	UWorld* World = GetWorld();
+	if (World == nullptr || !IsUsingPropThirdPersonCamera())
+	{
+		return;
+	}
+
+	const float SafeClearance = FMath::Clamp(MinimumCameraGroundClearance, 5.0f, 100.0f);
+	const float SafeTraceDepth = FMath::Clamp(CameraGroundTraceDepth, 100.0f, 1000.0f);
+	const FVector ActorLocation = GetActorLocation();
+	const float TraceStartZ = FMath::Max(
+		ActorLocation.Z + FMath::Max(CameraTargetHeight, SafeClearance * 2.0f),
+		OutResult.Location.Z + SafeClearance * 2.0f);
+	const FVector TraceStart(OutResult.Location.X, OutResult.Location.Y, TraceStartZ);
+	const FVector TraceEnd(OutResult.Location.X, OutResult.Location.Y, ActorLocation.Z - SafeTraceDepth);
+	FCollisionQueryParams QueryParams(SCENE_QUERY_STAT(PHPropCameraGroundGuard), false, this);
+	FHitResult GroundHit;
+	if (World->SweepSingleByChannel(
+		GroundHit,
+		TraceStart,
+		TraceEnd,
+		FQuat::Identity,
+		ECC_Camera,
+		FCollisionShape::MakeSphere(FMath::Max(2.0f, CameraCollisionProbeSize * 0.5f)),
+		QueryParams)
+		&& GroundHit.ImpactNormal.Z >= 0.25f)
+	{
+		OutResult.Location.Z = FMath::Max(
+			OutResult.Location.Z,
+			GroundHit.ImpactPoint.Z + SafeClearance);
+	}
+}
+
 void APHPropCharacter::ReceiveAuthoritativeMeleeHit(APHHunterCharacter& Attacker)
 {
 	if (!HasAuthority() || !Attacker.HasAuthority())
@@ -332,12 +525,20 @@ void APHPropCharacter::ReceiveAuthoritativeMeleeHit(APHHunterCharacter& Attacker
 		PerformAuthoritativeStopObjectiveInteraction();
 		StopAssistingDownedTarget();
 		StopRetentionRescue();
+		if (TransformationState.ActiveForm != nullptr)
+		{
+			PublishTransformationResult(EPHPropTransformationResult::ReturnedToInitial, nullptr);
+		}
 		ResetCaptureProgress();
 		if (UCharacterMovementComponent* Movement = GetCharacterMovement())
 		{
 			Movement->StopMovementImmediately();
 		}
 		SetCaptureState(EPHPropCaptureState::Downed);
+		if (APHPlayerState* AttackerState = Attacker.GetPlayerState<APHPlayerState>())
+		{
+			AttackerState->RecordHunterDown();
+		}
 		UE_LOG(LogPHTransformation, Log, TEXT("%s was downed by a melee hit from %s."),
 			*GetName(), *Attacker.GetName());
 	}
@@ -365,7 +566,28 @@ void APHPropCharacter::RequestSurvivorInteraction()
 		return;
 	}
 
-	RequestStartObjectiveInteraction();
+	APHObjectiveActor* RequestedObjective = nullptr;
+	APHExitGate* RequestedExitGate = nullptr;
+	if (TryResolveExitGateTarget(RequestedExitGate) && RequestedExitGate != nullptr)
+	{
+		if (HasAuthority())
+		{
+			PerformAuthoritativeStartExitGateInteraction(RequestedExitGate);
+		}
+		else
+		{
+			ServerRequestStartExitGateInteraction(RequestedExitGate);
+		}
+		return;
+	}
+
+	if (TryResolveObjectiveTarget(RequestedObjective) && RequestedObjective != nullptr)
+	{
+		RequestStartObjectiveInteraction();
+		return;
+	}
+
+	RequestPropTransformation();
 }
 
 void APHPropCharacter::StopSurvivorInteraction()
@@ -377,6 +599,14 @@ void APHPropCharacter::StopSurvivorInteraction()
 
 	RequestStopCaptureAssist();
 	RequestStopObjectiveInteraction();
+	if (HasAuthority())
+	{
+		PerformAuthoritativeStopExitGateInteraction();
+	}
+	else if (ActiveExitGate != nullptr)
+	{
+		ServerRequestStopExitGateInteraction();
+	}
 }
 
 void APHPropCharacter::RequestCaptureRescue()
@@ -418,6 +648,50 @@ void APHPropCharacter::RequestCaptureRescue()
 		ServerRequestCaptureAssist(RequestedTarget);
 	}
 }
+
+#if !UE_BUILD_SHIPPING
+void APHPropCharacter::ForceFinalRetentionForSmoke(APHRetentionPoint& SmokeRetentionPoint)
+{
+	if (!HasAuthority())
+	{
+		return;
+	}
+
+	RetentionCount = FMath::Max(0, MaximumRetentionCount - 1);
+	Carrier = nullptr;
+	SetCaptureState(EPHPropCaptureState::Carried);
+	ServerRetainAt(SmokeRetentionPoint);
+}
+
+bool APHPropCharacter::ForcePropFormForSmoke(UPHPropFormDataAsset& SmokeForm)
+{
+	if (!HasAuthority() || !IsPropFormAllowed(&SmokeForm))
+	{
+		return false;
+	}
+
+	EPHPropTransformationResult Failure = EPHPropTransformationResult::None;
+	if (!TryApplyForm(&SmokeForm, nullptr, Failure))
+	{
+		PublishTransformationResult(Failure, TransformationState.ActiveForm);
+		return false;
+	}
+	return true;
+}
+
+void APHPropCharacter::PrepareMementoForSmoke(const int32 PriorRetentionCount)
+{
+	if (!HasAuthority())
+	{
+		return;
+	}
+
+	ClearCaptureRelationships();
+	RetentionCount = FMath::Clamp(PriorRetentionCount, 0, MaximumRetentionCount);
+	ResetCaptureProgress();
+	SetCaptureState(EPHPropCaptureState::Downed);
+}
+#endif
 
 bool APHPropCharacter::CanPerformCaptureRescue() const
 {
@@ -481,6 +755,671 @@ void APHPropCharacter::HandleCaptureStruggleAxis(const float Value)
 	}
 }
 
+bool APHPropCharacter::IsUsingPhysicsPropMovement() const
+{
+	return TransformationState.ActiveForm != nullptr
+		&& DefaultPhysicsPropDefinition != nullptr
+		&& (CaptureState == EPHPropCaptureState::Free || CaptureState == EPHPropCaptureState::Grace);
+}
+
+void APHPropCharacter::MoveForward(const float Value)
+{
+	if (IsUsingPhysicsPropMovement())
+	{
+		LocalPhysicsForwardInput = FMath::Clamp(Value, -1.0f, 1.0f);
+		return;
+	}
+	LocalPhysicsForwardInput = 0.0f;
+	Super::MoveForward(Value);
+}
+
+void APHPropCharacter::MoveRight(const float Value)
+{
+	if (IsUsingPhysicsPropMovement())
+	{
+		LocalPhysicsRightInput = FMath::Clamp(Value, -1.0f, 1.0f);
+		return;
+	}
+	LocalPhysicsRightInput = 0.0f;
+	Super::MoveRight(Value);
+}
+
+void APHPropCharacter::RequestJump()
+{
+	if (!IsUsingPhysicsPropMovement())
+	{
+		Super::RequestJump();
+		return;
+	}
+	if (HasAuthority())
+	{
+		TryPhysicsPropJump();
+	}
+	else
+	{
+		ServerRequestPhysicsPropJump();
+	}
+}
+
+void APHPropCharacter::RequestStopJump()
+{
+	if (!IsUsingPhysicsPropMovement())
+	{
+		Super::RequestStopJump();
+	}
+}
+
+bool APHPropCharacter::CanUseSoundEmote() const
+{
+	return !bMementoInProgress
+		&& (CaptureState == EPHPropCaptureState::Free || CaptureState == EPHPropCaptureState::Grace);
+}
+
+void APHPropCharacter::StartPhysicsPropStraighten()
+{
+	bLocalPhysicsStraightenHeld = true;
+}
+
+void APHPropCharacter::StopPhysicsPropStraighten()
+{
+	bLocalPhysicsStraightenHeld = false;
+}
+
+void APHPropCharacter::ServerSetPhysicsPropInput_Implementation(
+	const float Forward,
+	const float Right,
+	const float ViewYaw,
+	const bool bStraighten)
+{
+	SetServerPhysicsPropInput(Forward, Right, ViewYaw, bStraighten);
+}
+
+void APHPropCharacter::ServerSetSpectatorViewRotation_Implementation(
+	const uint16 CompressedPitch,
+	const uint16 CompressedYaw)
+{
+	if (!HasAuthority() || GetWorld() == nullptr)
+	{
+		return;
+	}
+
+	const double Now = GetWorld()->GetTimeSeconds();
+	if (Now - LastServerSpectatorViewUpdateTime < (1.0 / 60.0))
+	{
+		return;
+	}
+
+	const float Pitch = FMath::Clamp(
+		FRotator::NormalizeAxis(FRotator::DecompressAxisFromShort(CompressedPitch)),
+		-89.0f,
+		89.0f);
+	const float Yaw = FRotator::NormalizeAxis(FRotator::DecompressAxisFromShort(CompressedYaw));
+	ReplicatedSpectatorViewRotation = FRotator(Pitch, Yaw, 0.0f);
+	LastServerSpectatorViewUpdateTime = Now;
+}
+
+void APHPropCharacter::ServerRequestPhysicsPropJump_Implementation()
+{
+	TryPhysicsPropJump();
+}
+
+void APHPropCharacter::SetServerPhysicsPropInput(
+	const float Forward,
+	const float Right,
+	const float ViewYaw,
+	const bool bStraighten)
+{
+	if (!HasAuthority() || !IsUsingPhysicsPropMovement())
+	{
+		return;
+	}
+	ServerPhysicsForwardInput = FMath::IsFinite(Forward) ? FMath::Clamp(Forward, -1.0f, 1.0f) : 0.0f;
+	ServerPhysicsRightInput = FMath::IsFinite(Right) ? FMath::Clamp(Right, -1.0f, 1.0f) : 0.0f;
+	ServerPhysicsViewYaw = FMath::IsFinite(ViewYaw) ? FRotator::NormalizeAxis(ViewYaw) : GetActorRotation().Yaw;
+	bServerPhysicsStraightenHeld = bStraighten;
+	LastServerPhysicsPropInputTime = GetWorld() != nullptr ? GetWorld()->GetTimeSeconds() : 0.0;
+}
+
+void APHPropCharacter::RefreshPhysicsPropMovement()
+{
+	if (GrayboxPropBody == nullptr || GetCapsuleComponent() == nullptr || GetCharacterMovement() == nullptr)
+	{
+		return;
+	}
+
+	if (!IsUsingPhysicsPropMovement())
+	{
+		StopPhysicsPropSimulation();
+		return;
+	}
+
+	FText DefinitionError;
+	if (!DefaultPhysicsPropDefinition->HasValidDefinition(&DefinitionError))
+	{
+		UE_LOG(LogPHTransformation, Error, TEXT("Physics movement disabled for %s: %s"), *GetName(), *DefinitionError.ToString());
+		StopPhysicsPropSimulation();
+		return;
+	}
+
+	GetCharacterMovement()->StopMovementImmediately();
+	GetCharacterMovement()->DisableMovement();
+	GetCapsuleComponent()->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+	GrayboxPropBody->SetLinearDamping(FMath::Max(0.0f, DefaultPhysicsPropDefinition->FreeLinearDamping));
+	GrayboxPropBody->SetAngularDamping(FMath::Max(0.0f, DefaultPhysicsPropDefinition->FreeAngularDamping));
+	GrayboxPropBody->SetPhysMaterialOverride(DefaultPhysicsPropDefinition->FreePhysicalMaterial);
+	GrayboxPropBody->BodyInstance.bUseCCD = DefaultPhysicsPropDefinition->bUseContinuousCollisionDetection;
+	GrayboxPropBody->SetPhysicsMaxAngularVelocityInDegrees(
+		FMath::Clamp(DefaultPhysicsPropDefinition->MaximumAngularVelocityDegrees, 1.0f, 2000.0f),
+		false);
+	SetNetUpdateFrequency(FMath::Clamp(DefaultPhysicsPropDefinition->NetworkUpdateFrequency, 1.0f, 120.0f));
+	SetMinNetUpdateFrequency(FMath::Min(10.0f, GetNetUpdateFrequency()));
+
+	if (HasAuthority())
+	{
+		GrayboxPropBody->SetCollisionEnabled(ECollisionEnabled::QueryAndPhysics);
+		GrayboxPropBody->SetCollisionObjectType(ECC_PhysicsBody);
+		GrayboxPropBody->SetCollisionResponseToAllChannels(ECR_Block);
+		GrayboxPropBody->SetCollisionResponseToChannel(ECC_Pawn, ECR_Ignore);
+		GrayboxPropBody->SetCollisionResponseToChannel(PHCollision::PropHitbox, ECR_Ignore);
+		if (!GrayboxPropBody->IsSimulatingPhysics())
+		{
+			GrayboxPropBody->SetSimulatePhysics(true);
+			GrayboxPropBody->SetMassOverrideInKg(
+				NAME_None,
+				FMath::Clamp(DefaultPhysicsPropDefinition->MassOverrideKilograms, 0.01f, 500.0f),
+				true);
+			GrayboxPropBody->WakeAllRigidBodies();
+			ReplicatedPhysicsBodyRotation = GrayboxPropBody->GetComponentRotation();
+			ReplicatedPhysicsBodyLinearVelocity = GrayboxPropBody->GetPhysicsLinearVelocity();
+			ReplicatedPhysicsBodyAngularVelocity = GrayboxPropBody->GetPhysicsAngularVelocityInDegrees();
+			bPhysicsWasGrounded = IsPhysicsPropGrounded();
+			bReplicatedPhysicsBodyGrounded = bPhysicsWasGrounded;
+			PhysicsJumpsUsed = 0;
+		}
+	}
+	else
+	{
+		GrayboxPropBody->SetSimulatePhysics(false);
+		GrayboxPropBody->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+		ApplyReplicatedPhysicsPose();
+	}
+}
+
+void APHPropCharacter::StopPhysicsPropSimulation()
+{
+	if (GrayboxPropBody == nullptr || GetCapsuleComponent() == nullptr || PropPresentationRoot == nullptr)
+	{
+		return;
+	}
+
+	FTransform LastBodyTransform = GrayboxPropBody->GetComponentTransform();
+	if (GrayboxPropBody->IsSimulatingPhysics())
+	{
+		GrayboxPropBody->SetSimulatePhysics(false);
+		SetActorLocation(LastBodyTransform.GetLocation(), false, nullptr, ETeleportType::TeleportPhysics);
+	}
+	if (HasAuthority())
+	{
+		ReplicatedPhysicsBodyLinearVelocity = FVector::ZeroVector;
+		ReplicatedPhysicsBodyAngularVelocity = FVector::ZeroVector;
+		bReplicatedPhysicsBodyGrounded = false;
+	}
+	GrayboxPropBody->AttachToComponent(PropPresentationRoot, FAttachmentTransformRules::KeepWorldTransform);
+	ResetPhysicsPropPresentation();
+	GrayboxPropBody->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+	ServerPhysicsForwardInput = 0.0f;
+	ServerPhysicsRightInput = 0.0f;
+	bServerPhysicsStraightenHeld = false;
+	bPhysicsStraightenWasActive = false;
+	bPhysicsMovementWasActive = false;
+	CurrentPhysicsStraightenInterpSpeed = 0.0f;
+	PhysicsJumpsUsed = 0;
+
+	const bool bCapsuleShouldCollide = CaptureState != EPHPropCaptureState::Carried
+		&& CaptureState != EPHPropCaptureState::Retained
+		&& !PHCaptureFlow::IsTerminal(CaptureState);
+	GetCapsuleComponent()->SetCollisionEnabled(
+		bCapsuleShouldCollide ? ECollisionEnabled::QueryAndPhysics : ECollisionEnabled::NoCollision);
+
+	// Physics Prop control disables CharacterMovement on both the authority and
+	// the owning client. Stopping Chaos must restore the Character movement mode
+	// as well as the capsule, otherwise a successful return to the human form
+	// leaves the replicated Pawn in MOVE_None until another capture-state change.
+	if (UCharacterMovementComponent* Movement = GetCharacterMovement())
+	{
+		if (bCapsuleShouldCollide && Movement->MovementMode == MOVE_None)
+		{
+			Movement->SetMovementMode(MOVE_Walking);
+		}
+		ApplyMovementSpeed();
+	}
+}
+
+void APHPropCharacter::ApplyPhysicsPropControl(const float DeltaSeconds)
+{
+	if (!HasAuthority() || !IsUsingPhysicsPropMovement() || GrayboxPropBody == nullptr
+		|| DefaultPhysicsPropDefinition == nullptr || !GrayboxPropBody->IsSimulatingPhysics())
+	{
+		return;
+	}
+
+	const bool bGroundedNow = IsPhysicsPropGrounded();
+	if (bGroundedNow && !bPhysicsWasGrounded)
+	{
+		PhysicsJumpsUsed = 0;
+	}
+	bPhysicsWasGrounded = bGroundedNow;
+	bReplicatedPhysicsBodyGrounded = bGroundedNow;
+
+	const FVector2D RawInput(ServerPhysicsForwardInput, ServerPhysicsRightInput);
+	const bool bHasMovementInput = RawInput.SizeSquared() > FMath::Square(0.05f);
+	if (bHasMovementInput)
+	{
+		const FVector2D ClampedInput = RawInput.GetClampedToMaxSize(1.0f);
+		const FRotator YawRotation(0.0f, ServerPhysicsViewYaw, 0.0f);
+		const FVector DesiredDirection = (
+			FRotationMatrix(YawRotation).GetUnitAxis(EAxis::X) * ClampedInput.X
+			+ FRotationMatrix(YawRotation).GetUnitAxis(EAxis::Y) * ClampedInput.Y).GetSafeNormal();
+		const FVector LinearVelocity = GrayboxPropBody->GetPhysicsLinearVelocity();
+		const FVector HorizontalVelocity(LinearVelocity.X, LinearVelocity.Y, 0.0f);
+		const float NormalMaximumSpeed = FMath::Clamp(DefaultPhysicsPropDefinition->MaximumHorizontalSpeed, 1.0f, 2000.0f);
+		const float MaximumSpeed = !bGroundedNow && PhysicsJumpsUsed > 0
+			? FMath::Clamp(DefaultPhysicsPropDefinition->MaximumJumpHorizontalSpeed, NormalMaximumSpeed, 2500.0f)
+			: NormalMaximumSpeed;
+
+		const FVector TorqueAxis = FVector::CrossProduct(FVector::UpVector, DesiredDirection).GetSafeNormal();
+		const float SafeTorque = FMath::Clamp(DefaultPhysicsPropDefinition->MovementTorqueDegrees, 0.0f, 5000000.0f);
+		GrayboxPropBody->AddTorqueInDegrees(TorqueAxis * SafeTorque * ClampedInput.Size(), NAME_None, false);
+		if (DefaultPhysicsPropDefinition->bUseExperimentalAngularAssists)
+		{
+			FVector AngularVelocity = GrayboxPropBody->GetPhysicsAngularVelocityInDegrees();
+			const float TargetSpeed = FMath::Clamp(
+				DefaultPhysicsPropDefinition->MaximumAngularVelocityDegrees,
+				1.0f,
+				2000.0f) * ClampedInput.Size();
+			const float CurrentSpeed = FVector::DotProduct(AngularVelocity, TorqueAxis);
+			const float NewSpeed = FMath::FInterpConstantTo(
+				CurrentSpeed,
+				TargetSpeed,
+				DeltaSeconds,
+				FMath::Clamp(DefaultPhysicsPropDefinition->MovementAngularAccelerationDegrees, 0.0f, 5000.0f));
+			AngularVelocity += TorqueAxis * (NewSpeed - CurrentSpeed);
+			GrayboxPropBody->SetPhysicsAngularVelocityInDegrees(AngularVelocity, false);
+		}
+
+		const FVector DesiredHorizontalVelocity = DesiredDirection * MaximumSpeed * ClampedInput.Size();
+		const FVector NewHorizontalVelocity = FMath::VInterpTo(
+			HorizontalVelocity,
+			DesiredHorizontalVelocity,
+			DeltaSeconds,
+			FMath::Clamp(DefaultPhysicsPropDefinition->MovementVelocityInterpSpeed, 0.1f, 50.0f));
+		GrayboxPropBody->SetPhysicsLinearVelocity(
+			FVector(NewHorizontalVelocity.X, NewHorizontalVelocity.Y, LinearVelocity.Z),
+			false);
+		if (!bPhysicsMovementWasActive && DefaultPhysicsPropDefinition->MovementHopImpulse > 0.0f)
+		{
+			const float HopVelocity = FMath::Clamp(DefaultPhysicsPropDefinition->MovementHopImpulse, 0.0f, 250.0f);
+			GrayboxPropBody->AddImpulse(FVector::UpVector * GrayboxPropBody->GetMass() * HopVelocity);
+		}
+	}
+	else
+	{
+		const FVector LinearVelocity = GrayboxPropBody->GetPhysicsLinearVelocity();
+		const FVector HorizontalVelocity(LinearVelocity.X, LinearVelocity.Y, 0.0f);
+		const FVector NewHorizontalVelocity = FMath::VInterpTo(
+			HorizontalVelocity,
+			FVector::ZeroVector,
+			DeltaSeconds,
+			FMath::Clamp(DefaultPhysicsPropDefinition->MovementStopInterpSpeed, 0.1f, 100.0f));
+		GrayboxPropBody->SetPhysicsLinearVelocity(
+			FVector(NewHorizontalVelocity.X, NewHorizontalVelocity.Y, LinearVelocity.Z),
+			false);
+	}
+	bPhysicsMovementWasActive = bHasMovementInput;
+	ApplyPhysicsPropStraighten(DeltaSeconds);
+}
+
+void APHPropCharacter::ApplyPhysicsPropStraighten(const float DeltaSeconds)
+{
+	if (GrayboxPropBody == nullptr || DefaultPhysicsPropDefinition == nullptr)
+	{
+		return;
+	}
+	const bool bStraightenActive = bServerPhysicsStraightenHeld && IsUsingPhysicsPropMovement();
+	if (bStraightenActive != bPhysicsStraightenWasActive)
+	{
+		GrayboxPropBody->SetAngularDamping(bStraightenActive
+			? FMath::Max(0.0f, DefaultPhysicsPropDefinition->StraightenAngularDamping)
+			: FMath::Max(0.0f, DefaultPhysicsPropDefinition->FreeAngularDamping));
+		GrayboxPropBody->SetPhysMaterialOverride(bStraightenActive
+			? DefaultPhysicsPropDefinition->StraightenPhysicalMaterial
+			: DefaultPhysicsPropDefinition->FreePhysicalMaterial);
+		if (!bStraightenActive)
+		{
+			CurrentPhysicsStraightenInterpSpeed = 0.0f;
+		}
+		bPhysicsStraightenWasActive = bStraightenActive;
+	}
+	if (!bStraightenActive)
+	{
+		return;
+	}
+
+	CurrentPhysicsStraightenInterpSpeed = FMath::FInterpTo(
+		CurrentPhysicsStraightenInterpSpeed,
+		FMath::Max(0.0f, DefaultPhysicsPropDefinition->StraightenTargetInterpSpeed),
+		DeltaSeconds,
+		FMath::Max(0.0f, DefaultPhysicsPropDefinition->StraightenInterpSpeedAcceleration));
+	const FRotator TargetRotation(0.0f, ServerPhysicsViewYaw, 0.0f);
+	const FRotator CandidateRotation = FMath::RInterpTo(
+		GrayboxPropBody->GetComponentRotation(),
+		TargetRotation,
+		DeltaSeconds,
+		CurrentPhysicsStraightenInterpSpeed);
+	FHitResult RotationHit;
+	GrayboxPropBody->MoveComponent(
+		FVector::ZeroVector,
+		CandidateRotation.Quaternion(),
+		true,
+		&RotationHit,
+		MOVECOMP_NoFlags,
+		ETeleportType::TeleportPhysics);
+}
+
+void APHPropCharacter::TryPhysicsPropJump()
+{
+	if (!HasAuthority() || !IsUsingPhysicsPropMovement() || GrayboxPropBody == nullptr
+		|| DefaultPhysicsPropDefinition == nullptr || !GrayboxPropBody->IsSimulatingPhysics() || GetWorld() == nullptr)
+	{
+		return;
+	}
+	const double Now = GetWorld()->GetTimeSeconds();
+	const double Cooldown = FMath::Clamp(static_cast<double>(DefaultPhysicsPropDefinition->JumpCooldownSeconds), 0.05, 2.0);
+	if (Now - LastPhysicsPropJumpTime < Cooldown)
+	{
+		return;
+	}
+	const bool bGrounded = IsPhysicsPropGrounded();
+	const int32 MaximumJumpCount = FMath::Clamp(DefaultPhysicsPropDefinition->MaximumJumpCount, 1, 3);
+	if (bGrounded && !bPhysicsWasGrounded)
+	{
+		PhysicsJumpsUsed = 0;
+	}
+	if ((!bGrounded && PhysicsJumpsUsed == 0) || PhysicsJumpsUsed >= MaximumJumpCount)
+	{
+		return;
+	}
+	const float PhysicsJumpVelocity = FMath::Clamp(DefaultPhysicsPropDefinition->JumpVelocity, 0.0f, 1000.0f);
+	if (PhysicsJumpVelocity <= 0.0f)
+	{
+		return;
+	}
+
+	const FVector CurrentVelocity = GrayboxPropBody->GetPhysicsLinearVelocity();
+	FVector BoostDirection = FVector::ZeroVector;
+	const FVector2D RawInput(ServerPhysicsForwardInput, ServerPhysicsRightInput);
+	if (RawInput.SizeSquared() > FMath::Square(0.05f))
+	{
+		const FVector2D ClampedInput = RawInput.GetClampedToMaxSize(1.0f);
+		const FRotator YawRotation(0.0f, ServerPhysicsViewYaw, 0.0f);
+		BoostDirection = (
+			FRotationMatrix(YawRotation).GetUnitAxis(EAxis::X) * ClampedInput.X
+			+ FRotationMatrix(YawRotation).GetUnitAxis(EAxis::Y) * ClampedInput.Y).GetSafeNormal();
+	}
+	const float MaximumJumpHorizontalSpeed = FMath::Clamp(
+		DefaultPhysicsPropDefinition->MaximumJumpHorizontalSpeed,
+		FMath::Max(1.0f, DefaultPhysicsPropDefinition->MaximumHorizontalSpeed),
+		2500.0f);
+	const FVector TargetVelocity = PHPhysicsPropPresentation::ComputeJumpTargetVelocity(
+		CurrentVelocity,
+		BoostDirection,
+		PhysicsJumpVelocity,
+		DefaultPhysicsPropDefinition->JumpHorizontalBoostVelocity,
+		MaximumJumpHorizontalSpeed);
+	LastPhysicsPropJumpTime = Now;
+	++PhysicsJumpsUsed;
+	const FVector JumpImpulse = (TargetVelocity - CurrentVelocity) * GrayboxPropBody->GetMass();
+	GrayboxPropBody->AddImpulse(JumpImpulse);
+	GrayboxPropBody->WakeAllRigidBodies();
+	ReplicatedPhysicsBodyLinearVelocity = TargetVelocity;
+	bReplicatedPhysicsBodyGrounded = false;
+	ForceNetUpdate();
+	UE_LOG(LogPHPhysicsProp, Log,
+		TEXT("Authoritative playable Prop jump %d/%d accepted for %s: impulse=%.1f vertical=%.1f horizontal=%.1f grounded=%s."),
+		PhysicsJumpsUsed,
+		MaximumJumpCount,
+		*GetName(),
+		JumpImpulse.Size(),
+		TargetVelocity.Z,
+		TargetVelocity.Size2D(),
+		bGrounded ? TEXT("yes") : TEXT("no"));
+}
+
+bool APHPropCharacter::IsPhysicsPropGrounded() const
+{
+	FHitResult GroundHit;
+	return FindPhysicsPropGround(GroundHit);
+}
+
+bool APHPropCharacter::FindPhysicsPropGround(FHitResult& OutGroundHit) const
+{
+	OutGroundHit = FHitResult();
+	const UWorld* World = GetWorld();
+	if (World == nullptr || GrayboxPropBody == nullptr || DefaultPhysicsPropDefinition == nullptr)
+	{
+		return false;
+	}
+	const FBox CollisionBounds = GrayboxPropBody->BodyInstance.GetBodyBounds();
+	const bool bHasCollisionBounds = CollisionBounds.IsValid != 0;
+	const FBoxSphereBounds RenderBounds = GrayboxPropBody->Bounds;
+	const float ProbeDistance = FMath::Clamp(DefaultPhysicsPropDefinition->GroundProbeDistance, 1.0f, 100.0f);
+	const FVector Start = bHasCollisionBounds ? CollisionBounds.GetCenter() : RenderBounds.Origin;
+	const float BodyHalfHeight = bHasCollisionBounds ? CollisionBounds.GetExtent().Z : RenderBounds.BoxExtent.Z;
+	const FVector End = Start - FVector::UpVector * (BodyHalfHeight + ProbeDistance);
+	FCollisionQueryParams QueryParams(SCENE_QUERY_STAT(PHPlayablePhysicsPropGround), false, this);
+	return World->SweepSingleByChannel(
+		OutGroundHit,
+		Start,
+		End,
+		FQuat::Identity,
+		ECC_Visibility,
+		FCollisionShape::MakeSphere(8.0f),
+		QueryParams)
+		&& OutGroundHit.ImpactNormal.Z >= 0.25f;
+}
+
+void APHPropCharacter::SynchronizeActorToPhysicsProp()
+{
+	if (!HasAuthority() || !IsUsingPhysicsPropMovement() || GrayboxPropBody == nullptr
+		|| !GrayboxPropBody->IsSimulatingPhysics())
+	{
+		return;
+	}
+	const FTransform BodyTransform = GrayboxPropBody->GetComponentTransform();
+	SetActorLocation(BodyTransform.GetLocation(), false, nullptr, ETeleportType::TeleportPhysics);
+	GrayboxPropBody->SetWorldTransform(BodyTransform, false, nullptr, ETeleportType::TeleportPhysics);
+	ReplicatedPhysicsBodyRotation = BodyTransform.Rotator();
+	ReplicatedPhysicsBodyLinearVelocity = GrayboxPropBody->GetPhysicsLinearVelocity();
+	ReplicatedPhysicsBodyAngularVelocity = GrayboxPropBody->GetPhysicsAngularVelocityInDegrees();
+	bReplicatedPhysicsBodyGrounded = bPhysicsWasGrounded;
+	ApplyReplicatedPhysicsPose();
+}
+
+FPHPhysicsPropPresentationSettings APHPropCharacter::GetPhysicsPropPresentationSettings() const
+{
+	FPHPhysicsPropPresentationSettings Settings;
+	if (DefaultPhysicsPropDefinition != nullptr)
+	{
+		Settings.LocationSmoothingSpeed = DefaultPhysicsPropDefinition->NetworkVisualLocationSmoothingSpeed;
+		Settings.RotationSmoothingSpeed = DefaultPhysicsPropDefinition->NetworkVisualRotationSmoothingSpeed;
+		Settings.MaximumExtrapolationSeconds = DefaultPhysicsPropDefinition->NetworkVisualMaximumExtrapolationSeconds;
+		Settings.TeleportDistance = DefaultPhysicsPropDefinition->NetworkVisualTeleportDistance;
+	}
+	return Settings;
+}
+
+void APHPropCharacter::ResetPhysicsPropPresentation()
+{
+	PhysicsPropPresentationState = FPHPhysicsPropPresentationState();
+	if (PropPresentationRoot != nullptr)
+	{
+		PropPresentationRoot->SetRelativeTransform(FTransform::Identity);
+	}
+}
+
+void APHPropCharacter::ApplyReplicatedPhysicsPose(const float DeltaSeconds)
+{
+	if (!IsUsingPhysicsPropMovement() || GrayboxPropBody == nullptr || PropPresentationRoot == nullptr)
+	{
+		return;
+	}
+
+	FQuat VisualBodyRotation = ReplicatedPhysicsBodyRotation.Quaternion();
+	if (HasAuthority())
+	{
+		PropPresentationRoot->SetRelativeTransform(FTransform::Identity);
+	}
+	else
+	{
+		const UWorld* World = GetWorld();
+		PHPhysicsPropPresentation::Advance(
+			PhysicsPropPresentationState,
+			GetActorLocation(),
+			VisualBodyRotation,
+			FVector(ReplicatedPhysicsBodyLinearVelocity),
+			FVector(ReplicatedPhysicsBodyAngularVelocity),
+			World != nullptr ? World->GetTimeSeconds() : 0.0,
+			DeltaSeconds,
+			GetPhysicsPropPresentationSettings());
+		PropPresentationRoot->SetWorldLocation(
+			PhysicsPropPresentationState.Location,
+			false,
+			nullptr,
+			ETeleportType::TeleportPhysics);
+		VisualBodyRotation = PhysicsPropPresentationState.Rotation;
+	}
+
+	const FQuat RelativeBodyRotation = PropPresentationRoot->GetComponentQuat().Inverse() * VisualBodyRotation;
+	if (!HasAuthority() || !GrayboxPropBody->IsSimulatingPhysics())
+	{
+		GrayboxPropBody->SetRelativeLocation(FVector::ZeroVector);
+		GrayboxPropBody->SetRelativeRotation(RelativeBodyRotation);
+	}
+	if (!HasAuthority() && bReplicatedPhysicsBodyGrounded && DefaultPhysicsPropDefinition != nullptr)
+	{
+		FHitResult GroundHit;
+		if (FindPhysicsPropGround(GroundHit))
+		{
+			const FBoxSphereBounds VisualBounds = GrayboxPropBody->Bounds;
+			const float MaximumCorrection = FMath::Clamp(
+				DefaultPhysicsPropDefinition->GroundProbeDistance,
+				1.0f,
+				100.0f);
+			const float GroundCorrection = PHPhysicsPropPresentation::ComputeGroundContactCorrection(
+				true,
+				VisualBounds.Origin.Z - VisualBounds.BoxExtent.Z,
+				GroundHit.ImpactPoint.Z,
+				MaximumCorrection);
+			if (!FMath::IsNearlyZero(GroundCorrection, 0.05f))
+			{
+				PropPresentationRoot->AddWorldOffset(
+					FVector::UpVector * GroundCorrection,
+					false,
+					nullptr,
+					ETeleportType::TeleportPhysics);
+			}
+		}
+	}
+	const FPHResolvedPropHitbox BaseHitbox = ResolveHitbox(TransformationState.ActiveForm);
+	FPHResolvedPropHitbox RotatedHitbox = BaseHitbox;
+	RotatedHitbox.RelativeLocation = RelativeBodyRotation.RotateVector(BaseHitbox.RelativeLocation);
+	RotatedHitbox.RelativeRotation = (RelativeBodyRotation * BaseHitbox.RelativeRotation.Quaternion()).Rotator();
+	ApplyHitbox(RotatedHitbox);
+}
+
+void APHPropCharacter::OnRep_PhysicsBodyRotation()
+{
+	ApplyReplicatedPhysicsPose();
+}
+
+void APHPropCharacter::OnPhysicsPropHit(
+	UPrimitiveComponent* HitComponent,
+	AActor* OtherActor,
+	UPrimitiveComponent* OtherComponent,
+	const FVector NormalImpulse,
+	const FHitResult& Hit)
+{
+	if (!HasAuthority() || HitComponent != GrayboxPropBody || OtherComponent == nullptr
+		|| !IsUsingPhysicsPropMovement() || TransformationState.ActiveForm == nullptr
+		|| DefaultPhysicsPropDefinition == nullptr || DefaultPhysicsPropDefinition->ImpactSound == nullptr
+		|| TransformationState.ActiveForm->FormId != DefaultPhysicsPropDefinition->PropId)
+	{
+		return;
+	}
+
+	const UWorld* World = GetWorld();
+	if (World == nullptr)
+	{
+		return;
+	}
+
+	const float Threshold = DefaultPhysicsPropDefinition->ImpactImpulsePerMassThreshold
+		* GrayboxPropBody->GetMass();
+	if (Threshold <= 0.0f || NormalImpulse.SizeSquared() <= FMath::Square(Threshold))
+	{
+		return;
+	}
+
+	const double Now = World->GetTimeSeconds();
+	const double Cooldown = FMath::Clamp(
+		static_cast<double>(DefaultPhysicsPropDefinition->ImpactSoundCooldownSeconds),
+		0.05,
+		2.0);
+	if (Now - LastPhysicsPropImpactSoundTime < Cooldown)
+	{
+		return;
+	}
+
+	LastPhysicsPropImpactSoundTime = Now;
+	const FVector ImpactLocation = Hit.ImpactPoint.IsNearlyZero()
+		? GrayboxPropBody->GetComponentLocation()
+		: FVector(Hit.ImpactPoint);
+	MulticastPlayPhysicsPropImpactSound(ImpactLocation);
+	UE_LOG(LogPHTransformation, Log,
+		TEXT("Authoritative playable chicken impact for %s: impulse %.2f, threshold %.2f, other %s."),
+		*GetName(), NormalImpulse.Size(), Threshold,
+		OtherActor != nullptr ? *OtherActor->GetName() : TEXT("none"));
+}
+
+void APHPropCharacter::MulticastPlayPhysicsPropImpactSound_Implementation(
+	const FVector_NetQuantize ImpactLocation)
+{
+	UWorld* World = GetWorld();
+	if (World == nullptr || World->IsNetMode(NM_DedicatedServer)
+		|| DefaultPhysicsPropDefinition == nullptr
+		|| DefaultPhysicsPropDefinition->ImpactSound == nullptr)
+	{
+		return;
+	}
+
+	// The authority already validated the ScreamingChicken FormId. Re-checking
+	// replicated form state here can drop a valid sound when an RPC overtakes a
+	// property update on a remote dedicated-server client.
+	UAudioComponent* AudioComponent = NewObject<UAudioComponent>(this);
+	if (AudioComponent != nullptr)
+	{
+		AudioComponent->bAutoActivate = false;
+		AudioComponent->bAutoDestroy = true;
+		DefaultPhysicsPropDefinition->ConfigureImpactAudioComponent(*AudioComponent);
+		AudioComponent->SetWorldLocation(ImpactLocation);
+		AudioComponent->RegisterComponent();
+		AudioComponent->Play();
+		UE_LOG(LogPHTransformation, Log,
+			TEXT("Playable chicken impact multicast received for %s on local role %d at %s."),
+			*GetName(), static_cast<int32>(GetLocalRole()), *FVector(ImpactLocation).ToCompactString());
+	}
+}
+
 bool APHPropCharacter::ServerTryBeCarriedBy(APHHunterCharacter& Hunter)
 {
 	if (!HasAuthority() || CaptureState != EPHPropCaptureState::Downed || Carrier != nullptr)
@@ -490,7 +1429,7 @@ bool APHPropCharacter::ServerTryBeCarriedBy(APHHunterCharacter& Hunter)
 
 	ClearRecoveryHelpers();
 	StopAssistingDownedTarget();
-	ResetCaptureProgress();
+	ResetCarryStruggleInputWindow();
 	Carrier = &Hunter;
 	RetentionPoint = nullptr;
 	SetCaptureState(EPHPropCaptureState::Carried);
@@ -571,8 +1510,13 @@ void APHPropCharacter::ServerDropFromCarrier()
 	DetachFromActor(FDetachmentTransformRules::KeepWorldTransform);
 	const FRotator DropRotation = GetActorRotation();
 	SetActorRotation(FRotator(0.0f, DropRotation.Yaw, 0.0f), ETeleportType::TeleportPhysics);
-	ResetCaptureProgress();
+	ResetCarryStruggleInputWindow();
 	SetCaptureState(EPHPropCaptureState::Downed);
+	DownedRecoveryProgress = PHCaptureFlow::GetRecoveryProgressAfterHunterDrop(
+		DownedRecoveryProgress,
+		CarryDropRecoveryBonus);
+	LastPublishedDownedRecoveryProgress = DownedRecoveryProgress;
+	OnRep_CaptureProgress();
 	SetActorLocation(GetActorLocation() + FVector::UpVector * 20.0f, true);
 	if (UCharacterMovementComponent* Movement = GetCharacterMovement())
 	{
@@ -610,6 +1554,39 @@ void APHPropCharacter::ServerRetainAt(APHRetentionPoint& NewRetentionPoint)
 	const float Duration = PHCaptureFlow::GetRetentionDuration(
 		RetentionCount, FirstRetentionDuration, SecondRetentionDuration);
 	SetCaptureState(EPHPropCaptureState::Retained, Duration);
+	if (APHGameMode* GameMode = GetWorld() != nullptr ? GetWorld()->GetAuthGameMode<APHGameMode>() : nullptr)
+	{
+		GameMode->NotifyPropRetained(*this);
+	}
+}
+
+void APHPropCharacter::ServerClampRetainedEliminationDelay(const float MaximumRemainingSeconds)
+{
+	UWorld* World = GetWorld();
+	if (!HasAuthority() || World == nullptr || CaptureState != EPHPropCaptureState::Retained)
+	{
+		return;
+	}
+
+	const float SafeMaximumRemaining = FMath::Clamp(MaximumRemainingSeconds, 0.1f, 5.0f);
+	const float RemainingSeconds = CaptureStateEndServerTime - World->GetTimeSeconds();
+	if (RemainingSeconds > 0.0f && RemainingSeconds <= SafeMaximumRemaining + KINDA_SMALL_NUMBER)
+	{
+		return;
+	}
+
+	CaptureStateEndServerTime = World->GetTimeSeconds() + SafeMaximumRemaining;
+	GetWorldTimerManager().ClearTimer(CaptureStateTimerHandle);
+	GetWorldTimerManager().SetTimer(
+		CaptureStateTimerHandle,
+		this,
+		&APHPropCharacter::FinishRetention,
+		SafeMaximumRemaining,
+		false);
+	ForceNetUpdate();
+	UE_LOG(LogPHCapture, Log,
+		TEXT("All remaining Props are retained; clamped %s elimination delay to %.1f seconds."),
+		*GetName(), SafeMaximumRemaining);
 }
 
 void APHPropCharacter::ServerReleaseWithGrace()
@@ -634,6 +1611,45 @@ void APHPropCharacter::ServerReleaseWithGrace()
 	SetCaptureState(EPHPropCaptureState::Grace, GraceDuration);
 }
 
+bool APHPropCharacter::ServerStartMemento(
+	const FVector ImpactPoint,
+	const FVector LaunchVelocity,
+	const float DurationSeconds)
+{
+	if (!HasAuthority() || CaptureState != EPHPropCaptureState::Downed
+		|| bMementoInProgress || ImpactPoint.ContainsNaN() || LaunchVelocity.ContainsNaN())
+	{
+		return false;
+	}
+
+	ClearRecoveryHelpers();
+	StopAssistingDownedTarget();
+	StopRetentionRescue();
+	bMementoInProgress = true;
+	MementoImpactPoint = ImpactPoint;
+	const FVector HorizontalDirection(LaunchVelocity.X, LaunchVelocity.Y, 0.0f);
+	if (!HorizontalDirection.IsNearlyZero())
+	{
+		SetActorRotation(HorizontalDirection.Rotation(), ETeleportType::TeleportPhysics);
+	}
+	if (UCharacterMovementComponent* Movement = GetCharacterMovement())
+	{
+		Movement->StopMovementImmediately();
+		Movement->SetMovementMode(MOVE_Falling);
+	}
+	LaunchCharacter(LaunchVelocity, true, true);
+	GetWorldTimerManager().ClearTimer(MementoTimerHandle);
+	GetWorldTimerManager().SetTimer(
+		MementoTimerHandle,
+		this,
+		&APHPropCharacter::FinishMemento,
+		FMath::Clamp(DurationSeconds, 0.35f, 3.0f),
+		false);
+	OnRep_MementoState();
+	ForceNetUpdate();
+	return true;
+}
+
 void APHPropCharacter::ResetCaptureForMatch()
 {
 	if (!HasAuthority())
@@ -642,6 +1658,9 @@ void APHPropCharacter::ResetCaptureForMatch()
 	}
 
 	ClearCaptureRelationships();
+	GetWorldTimerManager().ClearTimer(MementoTimerHandle);
+	bMementoInProgress = false;
+	MementoImpactPoint = FVector::ZeroVector;
 	RetentionCount = 0;
 	ResetCaptureProgress();
 	SetActorHiddenInGame(false);
@@ -664,13 +1683,15 @@ void APHPropCharacter::RequestPropTransformation()
 
 	LastLocalTransformationRequestTime = LocalTimeSeconds;
 	BP_OnPropTransformationAnticipated(false);
+	APHPropTransformTarget* RequestedTarget = nullptr;
+	TryResolvePresentationTransformTarget(RequestedTarget);
 	if (HasAuthority())
 	{
-		PerformAuthoritativeTransformationRequest();
+		PerformAuthoritativeTransformationRequest(RequestedTarget);
 	}
 	else
 	{
-		ServerRequestPropTransformation();
+		ServerRequestPropTransformation(RequestedTarget);
 	}
 }
 
@@ -771,6 +1792,42 @@ void APHPropCharacter::ClearActiveObjectiveFromServer(const APHObjectiveActor* E
 	ForceNetUpdate();
 }
 
+void APHPropCharacter::SetActiveExitGateFromServer(APHExitGate* ExitGate)
+{
+	if (!HasAuthority() || ActiveExitGate == ExitGate)
+	{
+		return;
+	}
+	ActiveExitGate = ExitGate;
+	ForceNetUpdate();
+}
+
+void APHPropCharacter::ClearActiveExitGateFromServer(const APHExitGate* ExpectedGate)
+{
+	if (!HasAuthority() || ActiveExitGate == nullptr || ActiveExitGate != ExpectedGate)
+	{
+		return;
+	}
+	ActiveExitGate = nullptr;
+	ForceNetUpdate();
+}
+
+void APHPropCharacter::ServerEscapeThroughGate(APHExitGate& ExitGate)
+{
+	if (!HasAuthority() || !ExitGate.IsGateOpen()
+		|| (CaptureState != EPHPropCaptureState::Free && CaptureState != EPHPropCaptureState::Grace))
+	{
+		return;
+	}
+	PerformAuthoritativeStopObjectiveInteraction();
+	PerformAuthoritativeStopExitGateInteraction();
+	if (TransformationState.ActiveForm != nullptr)
+	{
+		TryReturnToInitialFormFromServer(TEXT("exit gate escape"));
+	}
+	SetCaptureState(EPHPropCaptureState::Escaped);
+}
+
 void APHPropCharacter::SetActiveRetentionRescueFromServer(APHRetentionPoint* Point)
 {
 	if (!HasAuthority() || Point == nullptr || ActiveRetentionRescuePoint == Point)
@@ -812,9 +1869,9 @@ FVector APHPropCharacter::GetMeleeLineOfSightPoint(const FVector& FromLocation) 
 	return ClosestPoint;
 }
 
-void APHPropCharacter::ServerRequestPropTransformation_Implementation()
+void APHPropCharacter::ServerRequestPropTransformation_Implementation(APHPropTransformTarget* RequestedTarget)
 {
-	PerformAuthoritativeTransformationRequest();
+	PerformAuthoritativeTransformationRequest(RequestedTarget);
 }
 
 void APHPropCharacter::ServerRequestReturnToInitialForm_Implementation()
@@ -830,6 +1887,16 @@ void APHPropCharacter::ServerRequestStartObjectiveInteraction_Implementation(APH
 void APHPropCharacter::ServerRequestStopObjectiveInteraction_Implementation()
 {
 	PerformAuthoritativeStopObjectiveInteraction();
+}
+
+void APHPropCharacter::ServerRequestStartExitGateInteraction_Implementation(APHExitGate* RequestedGate)
+{
+	PerformAuthoritativeStartExitGateInteraction(RequestedGate);
+}
+
+void APHPropCharacter::ServerRequestStopExitGateInteraction_Implementation()
+{
+	PerformAuthoritativeStopExitGateInteraction();
 }
 
 void APHPropCharacter::ServerRequestCaptureRescue_Implementation(APHRetentionPoint* RequestedPoint)
@@ -998,7 +2065,7 @@ void APHPropCharacter::UpdateHumanStamina(const float DeltaSeconds)
 void APHPropCharacter::UpdateDownedRecovery(const float DeltaSeconds)
 {
 	if (!HasAuthority() || CaptureState != EPHPropCaptureState::Downed
-		|| DeltaSeconds <= 0.0f)
+		|| bMementoInProgress || DeltaSeconds <= 0.0f)
 	{
 		return;
 	}
@@ -1047,7 +2114,8 @@ bool APHPropCharacter::CanJumpInternal_Implementation() const
 	if (CaptureState == EPHPropCaptureState::Downed
 		|| CaptureState == EPHPropCaptureState::Carried
 		|| CaptureState == EPHPropCaptureState::Retained
-		|| CaptureState == EPHPropCaptureState::Eliminated)
+		|| PHCaptureFlow::IsTerminal(CaptureState)
+		|| bMementoInProgress)
 	{
 		return false;
 	}
@@ -1260,6 +2328,21 @@ void APHPropCharacter::ApplyLocalViewMode()
 	}
 }
 
+void APHPropCharacter::SetLocallySpectated(const bool bSpectated)
+{
+	if (bLocallySpectated == bSpectated)
+	{
+		return;
+	}
+
+	bLocallySpectated = bSpectated;
+	if (bLocallySpectated)
+	{
+		SmoothedSpectatorViewRotation = ReplicatedSpectatorViewRotation;
+	}
+	ApplyLocalViewMode();
+}
+
 bool APHPropCharacter::TryResolveHumanPrototypeSelector(
 	APHHumanPrototypeSelector*& OutSelector) const
 {
@@ -1377,6 +2460,16 @@ void APHPropCharacter::OnRep_CaptureState()
 	ApplyCaptureState();
 	ApplyLocalViewMode();
 	BP_OnCaptureStateChanged(CaptureState);
+	if (UWorld* World = GetWorld())
+	{
+		for (TActorIterator<APHPlayerController> ControllerIterator(World); ControllerIterator; ++ControllerIterator)
+		{
+			if (ControllerIterator->IsLocalController())
+			{
+				ControllerIterator->HandlePropCaptureStateChanged(*this);
+			}
+		}
+	}
 }
 
 void APHPropCharacter::OnRep_CaptureProgress()
@@ -1388,6 +2481,15 @@ void APHPropCharacter::OnRep_CaptureProgress()
 		DownedRecoveryProgress,
 		RecoveryHelperCount,
 		CarryStruggleProgress);
+}
+
+void APHPropCharacter::OnRep_MementoState()
+{
+	ApplyLocalViewMode();
+	if (bMementoInProgress)
+	{
+		BP_OnMementoStarted(MementoImpactPoint);
+	}
 }
 
 bool APHPropCharacter::CanRequestTransformation(const double ServerTimeSeconds) const
@@ -1424,7 +2526,7 @@ double APHPropCharacter::GetSafeTransformationCooldownSeconds() const
 	return FMath::Clamp(static_cast<double>(TransformationCooldownSeconds), 0.1, 10.0);
 }
 
-void APHPropCharacter::PerformAuthoritativeTransformationRequest()
+void APHPropCharacter::PerformAuthoritativeTransformationRequest(APHPropTransformTarget* RequestedTarget)
 {
 	UWorld* World = GetWorld();
 	if (World == nullptr)
@@ -1450,7 +2552,7 @@ void APHPropCharacter::PerformAuthoritativeTransformationRequest()
 
 	APHPropTransformTarget* Target = nullptr;
 	EPHPropTransformationResult Failure = EPHPropTransformationResult::RejectedNoTarget;
-	if (!TryResolveTransformationTarget(Target, Failure))
+	if (!TryResolveTransformationTarget(RequestedTarget, Target, Failure))
 	{
 		PublishTransformationResult(Failure, TransformationState.ActiveForm);
 		return;
@@ -1496,16 +2598,41 @@ void APHPropCharacter::PerformAuthoritativeReturnRequest()
 		return;
 	}
 
+	TryReturnToInitialFormFromServer(TEXT("manual request"));
+}
+
+bool APHPropCharacter::TryReturnToInitialFormFromServer(const TCHAR* Reason)
+{
+	if (!HasAuthority() || TransformationState.ActiveForm == nullptr)
+	{
+		return false;
+	}
+
 	FVector NewLocation;
 	if (!TryFindPlacement(ResolveHitbox(nullptr), InitialCapsuleHalfHeight, nullptr, NewLocation))
 	{
 		PublishTransformationResult(EPHPropTransformationResult::RejectedPlacementBlocked, TransformationState.ActiveForm);
-		return;
+		UE_LOG(LogPHTransformation, Warning,
+			TEXT("Authoritative return to initial form rejected for %s (%s): human placement blocked."),
+			*GetName(),
+			Reason != nullptr ? Reason : TEXT("unspecified"));
+		return false;
 	}
 
+	// A simulating component is detached from the capsule. Stop it before moving
+	// the actor, otherwise ApplyTransformationState() would stop it afterwards and
+	// overwrite NewLocation with the old rigid-body centre.
+	if (GrayboxPropBody != nullptr && GrayboxPropBody->IsSimulatingPhysics())
+	{
+		StopPhysicsPropSimulation();
+	}
 	SetActorLocation(NewLocation, false, nullptr, ETeleportType::TeleportPhysics);
 	PublishTransformationResult(EPHPropTransformationResult::ReturnedToInitial, nullptr);
-	UE_LOG(LogPHTransformation, Log, TEXT("Authoritative return to initial form accepted for %s."), *GetName());
+	UE_LOG(LogPHTransformation, Log,
+		TEXT("Authoritative return to initial form accepted for %s (%s)."),
+		*GetName(),
+		Reason != nullptr ? Reason : TEXT("unspecified"));
+	return true;
 }
 
 void APHPropCharacter::PublishTransformationResult(
@@ -1540,6 +2667,7 @@ void APHPropCharacter::PublishTransformationResult(
 }
 
 bool APHPropCharacter::TryResolveTransformationTarget(
+	APHPropTransformTarget* RequestedTarget,
 	APHPropTransformTarget*& OutTarget,
 	EPHPropTransformationResult& OutFailure) const
 {
@@ -1553,51 +2681,42 @@ bool APHPropCharacter::TryResolveTransformationTarget(
 		return false;
 	}
 
-	const float SafeSearchDistance = FMath::Clamp(TransformationSearchDistance, 500.0f, 5000.0f);
 	const float SafeTransformationDistance = FMath::Clamp(TransformationDistance, 100.0f, 1000.0f);
 	const FVector TraceOrigin = GetActorLocation() + GetActorUpVector() * (GetCapsuleComponent()->GetScaledCapsuleHalfHeight() * 0.35f);
 	const FVector SelectionOrigin = GetViewSelectionOrigin();
 	const FVector AimDirection = Controller->GetControlRotation().Vector().GetSafeNormal();
 	const float SafeTargetingHalfAngleDegrees = FMath::Clamp(TransformationTargetingHalfAngleDegrees, 2.0f, 30.0f);
-	float BestAimDot = -1.0f;
-	float BestDistance = MAX_flt;
-
-	for (TActorIterator<APHPropTransformTarget> TargetIterator(World); TargetIterator; ++TargetIterator)
+	if (!IsValid(RequestedTarget) || RequestedTarget->GetWorld() != World)
 	{
-		APHPropTransformTarget* CandidateTarget = *TargetIterator;
-		if (!IsValid(CandidateTarget))
-		{
-			continue;
-		}
-
-		const FVector ToTarget = CandidateTarget->GetActorLocation() - SelectionOrigin;
-		const float CandidateDistance = ToTarget.Size();
-		if (CandidateDistance <= KINDA_SMALL_NUMBER || CandidateDistance > SafeSearchDistance)
-		{
-			continue;
-		}
-
-		const float AimDot = FVector::DotProduct(AimDirection, ToTarget / CandidateDistance);
-		FVector BoundsOrigin;
-		FVector BoundsExtent;
-		CandidateTarget->GetActorBounds(false, BoundsOrigin, BoundsExtent);
-		const float AngularRadiusRadians = FMath::Asin(FMath::Clamp(BoundsExtent.Size() / CandidateDistance, 0.0f, 1.0f));
-		const float CandidateHalfAngleRadians = FMath::DegreesToRadians(SafeTargetingHalfAngleDegrees) + AngularRadiusRadians;
-		const float CandidateMinimumAimDot = FMath::Cos(FMath::Min(CandidateHalfAngleRadians, HALF_PI));
-		const bool bBetterAngle = AimDot > BestAimDot + KINDA_SMALL_NUMBER;
-		const bool bSameAngleButCloser = FMath::IsNearlyEqual(AimDot, BestAimDot) && CandidateDistance < BestDistance;
-		if (AimDot >= CandidateMinimumAimDot && (OutTarget == nullptr || bBetterAngle || bSameAngleButCloser))
-		{
-			OutTarget = CandidateTarget;
-			BestAimDot = AimDot;
-			BestDistance = CandidateDistance;
-		}
+		return false;
 	}
 
-	if (OutTarget == nullptr)
+	OutTarget = RequestedTarget;
+	if (FVector::Dist(GetActorLocation(), OutTarget->GetActorLocation()) > SafeTransformationDistance)
 	{
-		UE_LOG(LogPHTransformation, Verbose, TEXT("No authored Prop target inside the %.1f degree server targeting cone for %s."),
-			SafeTargetingHalfAngleDegrees, *GetName());
+		OutFailure = EPHPropTransformationResult::RejectedTooFar;
+		return false;
+	}
+
+	const FVector ToTarget = OutTarget->GetActorLocation() - SelectionOrigin;
+	const float CandidateDistance = ToTarget.Size();
+	if (CandidateDistance <= KINDA_SMALL_NUMBER)
+	{
+		return false;
+	}
+	const float AimDot = FVector::DotProduct(AimDirection, ToTarget / CandidateDistance);
+	FVector BoundsOrigin;
+	FVector BoundsExtent;
+	OutTarget->GetActorBounds(false, BoundsOrigin, BoundsExtent);
+	const float AngularRadiusRadians = FMath::Asin(FMath::Clamp(BoundsExtent.Size() / CandidateDistance, 0.0f, 1.0f));
+	const float CandidateHalfAngleRadians = FMath::DegreesToRadians(SafeTargetingHalfAngleDegrees) + AngularRadiusRadians;
+	const float MinimumAimDot = FMath::Cos(FMath::Min(CandidateHalfAngleRadians, HALF_PI));
+	if (AimDot < MinimumAimDot)
+	{
+		UE_LOG(LogPHTransformation, Verbose,
+			TEXT("Rejected requested Prop target %s outside the %.1f degree authoritative cone for %s."),
+			*OutTarget->GetName(), SafeTargetingHalfAngleDegrees, *GetName());
+		OutTarget = nullptr;
 		return false;
 	}
 
@@ -1614,14 +2733,8 @@ bool APHPropCharacter::TryResolveTransformationTarget(
 		return false;
 	}
 
-	if (FVector::Dist(GetActorLocation(), OutTarget->GetActorLocation()) > SafeTransformationDistance)
-	{
-		OutFailure = EPHPropTransformationResult::RejectedTooFar;
-		return false;
-	}
-
 	const UPHPropFormDataAsset* CandidateForm = OutTarget->GetPropForm();
-	if (!IsPropFormAllowed(CandidateForm))
+	if (CandidateForm == nullptr || !IsPropFormAllowed(CandidateForm))
 	{
 		OutFailure = EPHPropTransformationResult::RejectedNotAllowed;
 		return false;
@@ -1636,6 +2749,105 @@ bool APHPropCharacter::TryResolveTransformationTarget(
 	}
 
 	return true;
+}
+
+bool APHPropCharacter::TryResolvePresentationTransformTarget(APHPropTransformTarget*& OutTarget) const
+{
+	OutTarget = nullptr;
+	const UWorld* World = GetWorld();
+	if (!IsLocallyControlled() || World == nullptr || Controller == nullptr)
+	{
+		return false;
+	}
+
+	FVector ViewLocation;
+	FRotator ViewRotation;
+	Controller->GetPlayerViewPoint(ViewLocation, ViewRotation);
+	const float SearchDistance = FMath::Clamp(TransformationSearchDistance, 500.0f, 5000.0f);
+	FCollisionQueryParams ViewQuery(SCENE_QUERY_STAT(PHPropTransformationPresentation), true, this);
+	ViewQuery.AddIgnoredActor(this);
+	FHitResult ViewHit;
+	if (!World->LineTraceSingleByChannel(
+		ViewHit,
+		ViewLocation,
+		ViewLocation + ViewRotation.Vector() * SearchDistance,
+		ECC_Visibility,
+		ViewQuery))
+	{
+		return false;
+	}
+
+	APHPropTransformTarget* Candidate = Cast<APHPropTransformTarget>(ViewHit.GetActor());
+	if (Candidate == nullptr
+		|| FVector::Dist(GetActorLocation(), Candidate->GetActorLocation())
+			> FMath::Clamp(TransformationDistance, 100.0f, 1000.0f)
+		|| !IsPropFormAllowed(Candidate->GetPropForm())
+		|| !Candidate->GetPropForm()->HasValidDefinition())
+	{
+		return false;
+	}
+
+	const FVector BodyTraceOrigin = GetActorLocation()
+		+ GetActorUpVector() * (GetCapsuleComponent()->GetScaledCapsuleHalfHeight() * 0.35f);
+	FCollisionQueryParams BodyQuery(SCENE_QUERY_STAT(PHPropTransformationPresentationBody), true, this);
+	BodyQuery.AddIgnoredActor(this);
+	FHitResult BodyHit;
+	if (!World->LineTraceSingleByChannel(
+		BodyHit, BodyTraceOrigin, Candidate->GetActorLocation(), ECC_Visibility, BodyQuery)
+		|| BodyHit.GetActor() != Candidate)
+	{
+		return false;
+	}
+
+	OutTarget = Candidate;
+	return true;
+}
+
+void APHPropCharacter::RefreshLocalInteractionPresentation()
+{
+	APHPropTransformTarget* NewHighlightedTarget = nullptr;
+	FText NewPrompt;
+	if (CanPerformCaptureRescue())
+	{
+		APHRetentionPoint* Point = nullptr;
+		APHPropCharacter* DownedTarget = nullptr;
+		APHObjectiveActor* Objective = nullptr;
+		APHExitGate* ExitGate = nullptr;
+		if (TryResolveRetentionPoint(Point) && Point != nullptr && Point->GetRetainedProp() != nullptr)
+		{
+			NewPrompt = FText::FromString(TEXT("MAINTENIR CLIC GAUCHE - LIBERER"));
+		}
+		else if (TryResolveDownedRecoveryTarget(DownedTarget) && DownedTarget != nullptr)
+		{
+			NewPrompt = FText::FromString(TEXT("MAINTENIR CLIC GAUCHE - SOIGNER"));
+		}
+		else if (TryResolveExitGateTarget(ExitGate) && ExitGate != nullptr)
+		{
+			NewPrompt = FText::FromString(TEXT("MAINTENIR CLIC GAUCHE - OUVRIR LA SORTIE"));
+		}
+		else if (TryResolveObjectiveTarget(Objective) && Objective != nullptr)
+		{
+			NewPrompt = FText::FromString(TEXT("MAINTENIR CLIC GAUCHE - INTERAGIR"));
+		}
+		else if (TryResolvePresentationTransformTarget(NewHighlightedTarget))
+		{
+			NewPrompt = FText::FromString(TEXT("CLIC GAUCHE - SE TRANSFORMER"));
+		}
+	}
+
+	if (HighlightedTransformTarget.Get() != NewHighlightedTarget)
+	{
+		if (HighlightedTransformTarget.IsValid())
+		{
+			HighlightedTransformTarget->SetLocallyHighlighted(false);
+		}
+		HighlightedTransformTarget = NewHighlightedTarget;
+		if (NewHighlightedTarget != nullptr)
+		{
+			NewHighlightedTarget->SetLocallyHighlighted(true);
+		}
+	}
+	CachedPrimaryInteractionPrompt = MoveTemp(NewPrompt);
 }
 
 bool APHPropCharacter::TryApplyForm(
@@ -1663,6 +2875,10 @@ bool APHPropCharacter::TryApplyForm(
 		return false;
 	}
 
+	if (GrayboxPropBody != nullptr && GrayboxPropBody->IsSimulatingPhysics())
+	{
+		StopPhysicsPropSimulation();
+	}
 	SetActorLocation(NewLocation, false, nullptr, ETeleportType::TeleportPhysics);
 	PublishTransformationResult(EPHPropTransformationResult::Transformed, NewForm);
 	return true;
@@ -1681,8 +2897,25 @@ bool APHPropCharacter::TryFindPlacement(
 		return false;
 	}
 
-	const float CurrentHalfHeight = GetCapsuleComponent()->GetUnscaledCapsuleHalfHeight();
-	OutLocation = GetActorLocation() + GetActorUpVector() * (NewCapsuleHalfHeight - CurrentHalfHeight);
+	if (GrayboxPropBody != nullptr && GrayboxPropBody->IsSimulatingPhysics())
+	{
+		// During Chaos the actor follows the rigid-body component origin, which is
+		// not guaranteed to be the geometric centre authored for the gameplay
+		// capsule. Preserve the lowest point of the actual Chaos body, not the
+		// render bounds: decorative vertices can extend below the authored convexes.
+		const FBox CollisionBounds = GrayboxPropBody->BodyInstance.GetBodyBounds();
+		const FBoxSphereBounds RenderBounds = GrayboxPropBody->Bounds;
+		const float PhysicsBodyBottom = CollisionBounds.IsValid
+			? CollisionBounds.Min.Z
+			: RenderBounds.Origin.Z - RenderBounds.BoxExtent.Z;
+		OutLocation = GetActorLocation();
+		OutLocation.Z = PhysicsBodyBottom + NewCapsuleHalfHeight;
+	}
+	else
+	{
+		const float CurrentHalfHeight = GetCapsuleComponent()->GetUnscaledCapsuleHalfHeight();
+		OutLocation = GetActorLocation() + GetActorUpVector() * (NewCapsuleHalfHeight - CurrentHalfHeight);
+	}
 	if (OutLocation.ContainsNaN() || OutLocation.GetAbsMax() >= HALF_WORLD_MAX)
 	{
 		return false;
@@ -1694,15 +2927,51 @@ bool APHPropCharacter::TryFindPlacement(
 		return true;
 	}
 
-	if (CopiedTarget == nullptr || BlockingActors.IsEmpty()
-		|| BlockingActors.ContainsByPredicate([CopiedTarget](const AActor* Actor) { return Actor != CopiedTarget; }))
+	const float SafeMaximumAdjustment = FMath::Clamp(MaximumPlacementAdjustment, 0.0f, 25.0f);
+	const float SafeAdjustmentStep = FMath::Clamp(PlacementAdjustmentStep, 1.0f, FMath::Max(1.0f, SafeMaximumAdjustment));
+	if (SafeMaximumAdjustment <= 0.0f)
 	{
 		return false;
 	}
 
-	const float SafeMaximumAdjustment = FMath::Clamp(MaximumPlacementAdjustment, 0.0f, 25.0f);
-	const float SafeAdjustmentStep = FMath::Clamp(PlacementAdjustmentStep, 1.0f, FMath::Max(1.0f, SafeMaximumAdjustment));
-	if (SafeMaximumAdjustment <= 0.0f)
+	if (CopiedTarget == nullptr)
+	{
+		// Chaos can settle a rigid body slightly into the floor contact tolerance.
+		// Search only upward inside the authored clearance budget. Every candidate
+		// still passes the full overlap query, so walls, ceilings and Pawns block it.
+		const int32 VerticalSampleCount = FMath::CeilToInt(SafeMaximumAdjustment / SafeAdjustmentStep);
+		for (int32 SampleIndex = 1; SampleIndex <= VerticalSampleCount; ++SampleIndex)
+		{
+			const float Distance = FMath::Min(SampleIndex * SafeAdjustmentStep, SafeMaximumAdjustment);
+			const FVector CandidateLocation = OutLocation + GetActorUpVector() * Distance;
+			BlockingActors.Reset();
+			if (QueryPlacementBlockers(Hitbox, CandidateLocation, BlockingActors))
+			{
+				OutLocation = CandidateLocation;
+				UE_LOG(LogPHTransformation, Log,
+					TEXT("Server return-to-human floor clearance moved %s upward by %.1f cm."),
+					*GetName(), Distance);
+				return true;
+			}
+		}
+		FString BlockerNames;
+		for (const AActor* BlockingActor : BlockingActors)
+		{
+			if (!BlockerNames.IsEmpty())
+			{
+				BlockerNames += TEXT(", ");
+			}
+			BlockerNames += GetNameSafe(BlockingActor);
+		}
+		UE_LOG(LogPHTransformation, Warning,
+			TEXT("Return placement rejected for %s at Z=%.1f after %.1f cm clearance; blockers: %s."),
+			*GetName(), OutLocation.Z, SafeMaximumAdjustment,
+			BlockerNames.IsEmpty() ? TEXT("none") : *BlockerNames);
+		return false;
+	}
+
+	if (BlockingActors.IsEmpty()
+		|| BlockingActors.ContainsByPredicate([CopiedTarget](const AActor* Actor) { return Actor != CopiedTarget; }))
 	{
 		return false;
 	}
@@ -1728,6 +2997,19 @@ bool APHPropCharacter::TryFindPlacement(
 			return true;
 		}
 	}
+	FString BlockerNames;
+	for (const AActor* BlockingActor : BlockingActors)
+	{
+		if (!BlockerNames.IsEmpty())
+		{
+			BlockerNames += TEXT(", ");
+		}
+		BlockerNames += GetNameSafe(BlockingActor);
+	}
+	UE_LOG(LogPHTransformation, Warning,
+		TEXT("Prop placement rejected for %s near %s after %.1f cm clearance; blockers: %s."),
+		*GetName(), *GetNameSafe(CopiedTarget), SafeMaximumAdjustment,
+		BlockerNames.IsEmpty() ? TEXT("none") : *BlockerNames);
 
 	return false;
 }
@@ -1845,6 +3127,10 @@ void APHPropCharacter::ApplyTransformationState()
 	{
 		return;
 	}
+	if (GrayboxPropBody->IsSimulatingPhysics())
+	{
+		StopPhysicsPropSimulation();
+	}
 
 	const float Radius = TransformationState.CapsuleRadius > 0.0f ? TransformationState.CapsuleRadius : InitialCapsuleRadius;
 	const float HalfHeight = TransformationState.CapsuleHalfHeight > 0.0f ? TransformationState.CapsuleHalfHeight : InitialCapsuleHalfHeight;
@@ -1878,6 +3164,7 @@ void APHPropCharacter::ApplyTransformationState()
 		GrayboxPropBody->SetRelativeRotation(InitialMeshRelativeRotation);
 		GrayboxPropBody->SetRelativeScale3D(InitialMeshRelativeScale);
 	}
+	RefreshPhysicsPropMovement();
 	ApplyLocalViewMode();
 }
 
@@ -1907,7 +3194,24 @@ bool APHPropCharacter::TryResolveObjectiveTarget(APHObjectiveActor*& OutObjectiv
 
 		const FVector ToObjective = Candidate->GetInteractionPoint() - SelectionOrigin;
 		const float Distance = ToObjective.Size();
-		if (Distance <= KINDA_SMALL_NUMBER || Distance > SafeSearchDistance)
+		const float CandidateInteractionDistance = FMath::Clamp(
+			Candidate->GetInteractionDistance(), 100.0f, 500.0f);
+		if (Distance <= KINDA_SMALL_NUMBER || Distance > SafeSearchDistance
+			|| FVector::DistSquared(GetActorLocation(), Candidate->GetActorLocation())
+				> FMath::Square(CandidateInteractionDistance))
+		{
+			continue;
+		}
+
+		const UCapsuleComponent* Capsule = GetCapsuleComponent();
+		const float CapsuleHalfHeight = Capsule != nullptr ? Capsule->GetScaledCapsuleHalfHeight() : 60.0f;
+		const FVector TraceOrigin = GetActorLocation() + GetActorUpVector() * (CapsuleHalfHeight * 0.35f);
+		FCollisionQueryParams QueryParams(SCENE_QUERY_STAT(PHObjectiveInteractionPresentation), true, this);
+		QueryParams.AddIgnoredActor(this);
+		FHitResult HitResult;
+		if (!World->LineTraceSingleByChannel(
+			HitResult, TraceOrigin, Candidate->GetInteractionPoint(), ECC_Visibility, QueryParams)
+			|| HitResult.GetActor() != Candidate)
 		{
 			continue;
 		}
@@ -1927,11 +3231,98 @@ bool APHPropCharacter::TryResolveObjectiveTarget(APHObjectiveActor*& OutObjectiv
 	return OutObjective != nullptr;
 }
 
+bool APHPropCharacter::TryResolveExitGateTarget(APHExitGate*& OutExitGate) const
+{
+	OutExitGate = nullptr;
+	const UWorld* World = GetWorld();
+	const APHGameState* GameState = World != nullptr ? World->GetGameState<APHGameState>() : nullptr;
+	if (World == nullptr || Controller == nullptr || GameState == nullptr
+		|| GameState->GetMatchPhase() != EPHMatchPhase::Escape)
+	{
+		return false;
+	}
+
+	const FVector SelectionOrigin = GetViewSelectionOrigin();
+	const FVector AimDirection = Controller->GetControlRotation().Vector().GetSafeNormal();
+	const float MinimumAimDot = FMath::Cos(FMath::DegreesToRadians(
+		FMath::Clamp(ObjectiveTargetingHalfAngleDegrees, 2.0f, 30.0f)));
+	float BestAimDot = -1.0f;
+	float BestDistance = MAX_flt;
+	for (TActorIterator<APHExitGate> GateIterator(World); GateIterator; ++GateIterator)
+	{
+		APHExitGate* Candidate = *GateIterator;
+		if (!IsValid(Candidate) || !Candidate->IsGateEnabled() || Candidate->IsGateOpen())
+		{
+			continue;
+		}
+
+		if (!Candidate->IsWithinInteractionRange(GetActorLocation()))
+		{
+			continue;
+		}
+
+		const FVector ToGate = Candidate->GetInteractionPoint() - SelectionOrigin;
+		const float Distance = ToGate.Size();
+		if (Distance <= KINDA_SMALL_NUMBER)
+		{
+			continue;
+		}
+		const float AimDot = FVector::DotProduct(AimDirection, ToGate / Distance);
+		if (AimDot < MinimumAimDot)
+		{
+			continue;
+		}
+
+		FCollisionQueryParams QueryParams(SCENE_QUERY_STAT(PHExitGateInteractionPresentation), true, this);
+		QueryParams.AddIgnoredActor(this);
+		FHitResult HitResult;
+		if (!World->LineTraceSingleByChannel(
+			HitResult, GetActorLocation() + FVector(0.0f, 0.0f, 45.0f), Candidate->GetInteractionPoint(), ECC_Visibility, QueryParams)
+			|| HitResult.GetActor() != Candidate)
+		{
+			continue;
+		}
+
+		const bool bBetterAngle = AimDot > BestAimDot + KINDA_SMALL_NUMBER;
+		const bool bSameAngleButCloser = FMath::IsNearlyEqual(AimDot, BestAimDot) && Distance < BestDistance;
+		if (OutExitGate == nullptr || bBetterAngle || bSameAngleButCloser)
+		{
+			OutExitGate = Candidate;
+			BestAimDot = AimDot;
+			BestDistance = Distance;
+		}
+	}
+	return OutExitGate != nullptr;
+}
+
 void APHPropCharacter::PerformAuthoritativeStartObjectiveInteraction(APHObjectiveActor* RequestedObjective)
 {
 	if (!HasAuthority() || RequestedObjective == nullptr || CaptureState != EPHPropCaptureState::Free)
 	{
 		return;
+	}
+
+	// Validate the client-provided objective before changing form. The objective
+	// repeats this validation when the interaction actually starts, after the
+	// human placement may have adjusted the character location.
+	if (!RequestedObjective->CanPropInteract(*this))
+	{
+		return;
+	}
+
+	if (TransformationState.ActiveForm != nullptr)
+	{
+		if (!TryReturnToInitialFormFromServer(TEXT("objective interaction")))
+		{
+			return;
+		}
+
+		// The automatic return deliberately bypasses the manual cooldown, but a
+		// player must not immediately remorph while the objective begins.
+		if (const UWorld* World = GetWorld())
+		{
+			LastServerTransformationRequestTime = World->GetTimeSeconds();
+		}
 	}
 
 	if (ActiveObjective != nullptr && ActiveObjective != RequestedObjective)
@@ -1945,11 +3336,51 @@ void APHPropCharacter::PerformAuthoritativeStartObjectiveInteraction(APHObjectiv
 	}
 }
 
+void APHPropCharacter::PerformAuthoritativeStartExitGateInteraction(APHExitGate* RequestedGate)
+{
+	if (!HasAuthority() || RequestedGate == nullptr
+		|| (CaptureState != EPHPropCaptureState::Free && CaptureState != EPHPropCaptureState::Grace)
+		|| !RequestedGate->CanPropInteract(*this))
+	{
+		return;
+	}
+
+	if (TransformationState.ActiveForm != nullptr)
+	{
+		if (!TryReturnToInitialFormFromServer(TEXT("exit gate interaction")))
+		{
+			return;
+		}
+		if (const UWorld* World = GetWorld())
+		{
+			LastServerTransformationRequestTime = World->GetTimeSeconds();
+		}
+	}
+
+	PerformAuthoritativeStopObjectiveInteraction();
+	if (ActiveExitGate != nullptr && ActiveExitGate != RequestedGate)
+	{
+		ActiveExitGate->ServerEndInteraction(*this);
+	}
+	if (ActiveExitGate == nullptr)
+	{
+		RequestedGate->ServerTryBeginInteraction(*this);
+	}
+}
+
 void APHPropCharacter::PerformAuthoritativeStopObjectiveInteraction()
 {
 	if (HasAuthority() && ActiveObjective != nullptr)
 	{
 		ActiveObjective->ServerEndInteraction(*this);
+	}
+}
+
+void APHPropCharacter::PerformAuthoritativeStopExitGateInteraction()
+{
+	if (HasAuthority() && ActiveExitGate != nullptr)
+	{
+		ActiveExitGate->ServerEndInteraction(*this);
 	}
 }
 
@@ -2216,13 +3647,18 @@ void APHPropCharacter::ResetCaptureProgress()
 	DownedRecoveryProgress = 0.0f;
 	LastPublishedDownedRecoveryProgress = 0.0f;
 	CarryStruggleProgress = 0.0f;
+	ResetCarryStruggleInputWindow();
+	NextCarryStruggleShoveProgress = FMath::Clamp(CarryStruggleShoveProgressInterval, 0.05f, 0.5f);
+	OnRep_CaptureProgress();
+	ForceNetUpdate();
+}
+
+void APHPropCharacter::ResetCarryStruggleInputWindow()
+{
 	LastLocalStruggleDirection = 0;
 	LastServerStruggleDirection = 0;
 	LastLocalStruggleInputTime = -DBL_MAX;
 	LastServerStruggleInputTime = -DBL_MAX;
-	NextCarryStruggleShoveProgress = FMath::Clamp(CarryStruggleShoveProgressInterval, 0.05f, 0.5f);
-	OnRep_CaptureProgress();
-	ForceNetUpdate();
 }
 
 void APHPropCharacter::SetCaptureState(const EPHPropCaptureState NewState, const float DurationSeconds)
@@ -2241,6 +3677,22 @@ void APHPropCharacter::SetCaptureState(const EPHPropCaptureState NewState, const
 	{
 		StopAssistingDownedTarget();
 		StopRetentionRescue();
+	}
+	if (PHCaptureFlow::IsTerminal(NewState))
+	{
+		PerformAuthoritativeStopObjectiveInteraction();
+		PerformAuthoritativeStopExitGateInteraction();
+		if (Carrier != nullptr)
+		{
+			Carrier->ClearCarriedProp(this);
+		}
+		if (RetentionPoint != nullptr)
+		{
+			RetentionPoint->ClearRetainedProp(this);
+		}
+		Carrier = nullptr;
+		RetentionPoint = nullptr;
+		DetachFromActor(FDetachmentTransformRules::KeepWorldTransform);
 	}
 
 	GetWorldTimerManager().ClearTimer(CaptureStateTimerHandle);
@@ -2262,6 +3714,22 @@ void APHPropCharacter::SetCaptureState(const EPHPropCaptureState NewState, const
 
 	OnRep_CaptureState();
 	ForceNetUpdate();
+	if (PreviousState != EPHPropCaptureState::Eliminated
+		&& NewState == EPHPropCaptureState::Eliminated)
+	{
+		if (APHGameMode* GameMode = GetWorld() != nullptr ? GetWorld()->GetAuthGameMode<APHGameMode>() : nullptr)
+		{
+			GameMode->NotifyPropEliminated(*this);
+		}
+	}
+	else if (PreviousState != EPHPropCaptureState::Escaped
+		&& NewState == EPHPropCaptureState::Escaped)
+	{
+		if (APHGameMode* GameMode = GetWorld() != nullptr ? GetWorld()->GetAuthGameMode<APHGameMode>() : nullptr)
+		{
+			GameMode->NotifyPropEscaped(*this);
+		}
+	}
 }
 
 void APHPropCharacter::ApplyCaptureState()
@@ -2274,12 +3742,12 @@ void APHPropCharacter::ApplyCaptureState()
 
 	const bool bAttachedCapture = CaptureState == EPHPropCaptureState::Carried
 		|| CaptureState == EPHPropCaptureState::Retained;
-	const bool bMovementDisabled = bAttachedCapture
-		|| CaptureState == EPHPropCaptureState::Eliminated;
+	const bool bTerminal = PHCaptureFlow::IsTerminal(CaptureState);
+	const bool bMovementDisabled = bAttachedCapture || bTerminal;
 	const bool bDowned = CaptureState == EPHPropCaptureState::Downed;
 
-	SetActorHiddenInGame(CaptureState == EPHPropCaptureState::Eliminated);
-	SetActorEnableCollision(!bAttachedCapture && CaptureState != EPHPropCaptureState::Eliminated);
+	SetActorHiddenInGame(bTerminal);
+	SetActorEnableCollision(!bAttachedCapture && !bTerminal);
 	if (bMovementDisabled || bDowned)
 	{
 		bWantsHumanSprint = false;
@@ -2302,6 +3770,7 @@ void APHPropCharacter::ApplyCaptureState()
 	{
 		Movement->SetMovementMode(MOVE_Walking);
 	}
+	RefreshPhysicsPropMovement();
 }
 
 void APHPropCharacter::FinishGrace()
@@ -2319,6 +3788,17 @@ void APHPropCharacter::FinishRetention()
 		return;
 	}
 
+	// The release interaction is authoritative on the retention point. Do not let
+	// the independent elimination timer win while a valid rescuer is actively
+	// completing that interaction. CanRescuerRelease() resets the release state
+	// as soon as the rescuer lets go, moves away or becomes invalid.
+	if (RetentionPoint != nullptr && RetentionPoint->IsReleaseInProgressFor(*this))
+	{
+		GetWorldTimerManager().SetTimer(
+			CaptureStateTimerHandle, this, &APHPropCharacter::FinishRetention, 0.1f, false);
+		return;
+	}
+
 	if (RetentionPoint != nullptr)
 	{
 		RetentionPoint->ClearRetainedProp(this);
@@ -2328,11 +3808,28 @@ void APHPropCharacter::FinishRetention()
 	SetCaptureState(EPHPropCaptureState::Eliminated);
 }
 
+void APHPropCharacter::FinishMemento()
+{
+	if (!HasAuthority() || !bMementoInProgress)
+	{
+		return;
+	}
+
+	bMementoInProgress = false;
+	OnRep_MementoState();
+	SetCaptureState(EPHPropCaptureState::Eliminated);
+	ForceNetUpdate();
+}
+
 void APHPropCharacter::ClearCaptureRelationships()
 {
 	GetWorldTimerManager().ClearTimer(CaptureStateTimerHandle);
+	GetWorldTimerManager().ClearTimer(MementoTimerHandle);
+	bMementoInProgress = false;
 	StopAssistingDownedTarget();
 	StopRetentionRescue();
+	PerformAuthoritativeStopObjectiveInteraction();
+	PerformAuthoritativeStopExitGateInteraction();
 	ClearRecoveryHelpers();
 	if (Carrier != nullptr)
 	{

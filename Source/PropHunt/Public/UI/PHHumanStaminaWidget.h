@@ -28,8 +28,17 @@ private:
 	TObjectPtr<UProgressBar> CaptureProgressBar;
 
 	UPROPERTY(Transient)
+	TObjectPtr<UProgressBar> DownedRecoveryBar;
+
+	UPROPERTY(Transient)
+	TObjectPtr<UProgressBar> CarryStruggleBar;
+
+	UPROPERTY(Transient)
 	TObjectPtr<UTextBlock> CaptureProgressLabel;
 
 	UPROPERTY(Transient)
 	TObjectPtr<UTextBlock> MatchTimerLabel;
+
+	UPROPERTY(Transient)
+	TObjectPtr<UTextBlock> InteractionPromptLabel;
 };

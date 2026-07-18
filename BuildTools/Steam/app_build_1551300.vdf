@@ -1,0 +1,14 @@
+"appbuild"
+{
+	"appid" "1551300"
+	"desc" "PropHunt beta spectateur piquet et audio poulet protocole 5 2026-07-17"
+	"buildoutput" "C:/Users/Thomas/Documents/Unreal Projects/PropHunt/Saved/SteamBuildOutput"
+	"contentroot" "C:/Users/Thomas/Documents/Unreal Projects/PropHunt/package/ship/client/Windows"
+	"setlive" "beta"
+	"preview" "0"
+
+	"depots"
+	{
+		"1551301" "C:/Users/Thomas/Documents/Unreal Projects/PropHunt/BuildTools/Steam/depot_build_1551301.vdf"
+	}
+}

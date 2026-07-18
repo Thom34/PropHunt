@@ -8,6 +8,7 @@ public class PropHuntTarget : TargetRules
 		Type = TargetType.Game;
 		DefaultBuildSettings = BuildSettingsVersion.V7;
 		IncludeOrderVersion = EngineIncludeOrderVersion.Unreal5_8;
+		bUseLoggingInShipping = true;
 		ExtraModuleNames.Add("PropHunt");
 	}
 }

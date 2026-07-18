@@ -9,6 +9,7 @@ APHGameState::APHGameState()
 	, PhaseEndServerTime(0.0f)
 	, MatchSeed(0)
 	, CompletedObjectiveCount(0)
+	, ExpectedPlayerCount(0)
 	, MatchEndReason(EPHMatchEndReason::None)
 {
 	bReplicates = true;
@@ -22,7 +23,9 @@ void APHGameState::GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& OutLife
 	DOREPLIFETIME(APHGameState, PhaseEndServerTime);
 	DOREPLIFETIME(APHGameState, MatchSeed);
 	DOREPLIFETIME(APHGameState, CompletedObjectiveCount);
+	DOREPLIFETIME(APHGameState, ExpectedPlayerCount);
 	DOREPLIFETIME(APHGameState, MatchEndReason);
+	DOREPLIFETIME(APHGameState, MatchResultsSnapshot);
 }
 
 float APHGameState::GetRemainingPhaseTime() const
@@ -70,6 +73,16 @@ void APHGameState::SetCompletedObjectiveCount(const int32 NewCount)
 	}
 }
 
+void APHGameState::SetExpectedPlayerCount(const int32 NewCount)
+{
+	if (HasAuthority() && ExpectedPlayerCount != NewCount)
+	{
+		ExpectedPlayerCount = FMath::Max(0, NewCount);
+		BP_OnMatchStateChanged();
+		ForceNetUpdate();
+	}
+}
+
 void APHGameState::SetMatchEndReason(const EPHMatchEndReason NewReason)
 {
 	if (HasAuthority() && MatchEndReason != NewReason)
@@ -78,6 +91,30 @@ void APHGameState::SetMatchEndReason(const EPHMatchEndReason NewReason)
 		BP_OnMatchStateChanged();
 		ForceNetUpdate();
 	}
+}
+
+void APHGameState::SetMatchResultsSnapshot(const FPHMatchResultsSnapshot& NewSnapshot)
+{
+	if (!HasAuthority())
+	{
+		return;
+	}
+
+	MatchResultsSnapshot = NewSnapshot;
+	OnRep_MatchResultsSnapshot();
+	ForceNetUpdate();
+}
+
+void APHGameState::ClearMatchResultsSnapshot()
+{
+	if (!HasAuthority())
+	{
+		return;
+	}
+
+	MatchResultsSnapshot = FPHMatchResultsSnapshot();
+	OnRep_MatchResultsSnapshot();
+	ForceNetUpdate();
 }
 
 void APHGameState::OnRep_MatchPhase(const EPHMatchPhase PreviousPhase)
@@ -90,4 +127,9 @@ void APHGameState::OnRep_MatchPhase(const EPHMatchPhase PreviousPhase)
 void APHGameState::OnRep_MatchStateChanged()
 {
 	BP_OnMatchStateChanged();
+}
+
+void APHGameState::OnRep_MatchResultsSnapshot()
+{
+	BP_OnMatchResultsChanged();
 }

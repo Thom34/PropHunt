@@ -13,6 +13,8 @@ public class PropHunt : ModuleRules
 				"CoreUObject",
 				"Engine",
 				"InputCore",
+				"OnlineSubsystem",
+				"OnlineSubsystemUtils",
 				"PhysicsCore",
 				"UMG"
 			}
@@ -25,5 +27,10 @@ public class PropHunt : ModuleRules
 				"SlateCore"
 			}
 		);
+
+		if (Target.Platform == UnrealTargetPlatform.Win64 || Target.Platform == UnrealTargetPlatform.Linux)
+		{
+			DynamicallyLoadedModuleNames.Add("OnlineSubsystemSteam");
+		}
 	}
 }

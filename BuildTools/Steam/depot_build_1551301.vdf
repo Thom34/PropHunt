@@ -1,0 +1,15 @@
+"DepotBuildConfig"
+{
+	"DepotID" "1551301"
+	"ContentRoot" "C:/Users/Thomas/Documents/Unreal Projects/PropHunt/package/ship/client/Windows"
+
+	"FileMapping"
+	{
+		"LocalPath" "*"
+		"DepotPath" "."
+		"recursive" "1"
+	}
+
+	"FileExclusion" "*.pdb"
+	"FileExclusion" "steam_appid.txt"
+}

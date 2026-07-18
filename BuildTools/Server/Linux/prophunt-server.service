@@ -1,0 +1,37 @@
+[Unit]
+Description=PropHunt UE 5.8 Dedicated Server
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=simple
+User=prophunt
+Group=prophunt
+Environment=HOME=/var/lib/prophunt
+Environment=PH_ENV_FILE=/etc/prophunt/prophunt-server.env
+WorkingDirectory=/opt/prophunt/server
+ExecStartPre=/opt/prophunt/ops/preflight-prophunt-server.sh --env /etc/prophunt/prophunt-server.env
+ExecStart=/opt/prophunt/ops/run-prophunt-server.sh
+Restart=on-failure
+RestartSec=5s
+TimeoutStopSec=30s
+KillSignal=SIGINT
+UMask=0027
+LimitNOFILE=65535
+
+NoNewPrivileges=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectSystem=strict
+ProtectHome=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+RestrictRealtime=true
+LockPersonality=true
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+ReadWritePaths=/var/lib/prophunt /var/log/prophunt
+
+[Install]
+WantedBy=multi-user.target

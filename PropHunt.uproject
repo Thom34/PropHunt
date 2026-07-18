@@ -32,6 +32,22 @@
 			"TargetAllowList": [
 				"Editor"
 			]
+		},
+		{
+			"Name": "OnlineSubsystemSteam",
+			"Enabled": true,
+			"PlatformAllowList": [
+				"Win64",
+				"Linux"
+			]
+		},
+		{
+			"Name": "SteamSockets",
+			"Enabled": true,
+			"PlatformAllowList": [
+				"Win64",
+				"Linux"
+			]
 		}
 	]
 }

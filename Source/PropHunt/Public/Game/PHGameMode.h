@@ -8,6 +8,7 @@
 
 class APHGameState;
 class APHHunterCharacter;
+class APHExitGate;
 class APHObjectiveActor;
 class APHPropCharacter;
 class APHPlayerState;
@@ -27,19 +28,34 @@ public:
 	virtual void PostLogin(APlayerController* NewPlayer) override;
 	virtual void Logout(AController* Exiting) override;
 	virtual UClass* GetDefaultPawnClassForController_Implementation(AController* InController) override;
+	virtual AActor* ChoosePlayerStart_Implementation(AController* Player) override;
 
 	UFUNCTION(BlueprintPure, Category = "PropHunt|Match")
 	const UPHMatchRulesDataAsset* GetMatchRules() const;
 
 	void NotifyObjectiveCompleted(APHObjectiveActor& Objective);
+	void NotifyPropEliminated(APHPropCharacter& EliminatedProp);
+	void NotifyPropRetained(APHPropCharacter& RetainedProp);
+	void NotifyPropEscaped(APHPropCharacter& EscapedProp);
+
+#if !UE_BUILD_SHIPPING
+	void ForceEscapePhaseForSmoke();
+#endif
 
 protected:
 	void TryStartMatchFlow();
-	void AssignRole(APHPlayerState& NewPlayerState);
+	void FinishLobbyWait();
+	void CancelLobbyWait();
+	void AssignRole(APlayerController& NewPlayer);
 	void BeginPhase(EPHMatchPhase NewPhase);
 	void AdvanceTimedPhase();
+	void ReturnPlayersToLobbyAfterResults();
 	void FinishMatch(EPHMatchEndReason EndReason);
+	void BuildAndPublishMatchResults(EPHMatchEndReason EndReason);
+	void EvaluateAllRemainingPropsRetained(const APHPropCharacter* IgnoredProp = nullptr);
 	void PrepareObjectivesForMatch();
+	void PrepareExitGatesForMatch();
+	void SetExitGatesEnabled(bool bEnabled);
 	int32 CountPlayersWithRole(EPHPlayerRole DesiredRole) const;
 	APHGameState* GetPHGameState() const;
 
@@ -54,9 +70,16 @@ private:
 	TSubclassOf<APHPropCharacter> PropPawnClass;
 
 	FTimerHandle PhaseTimerHandle;
+	FTimerHandle LobbyWaitTimerHandle;
 	UPROPERTY(Transient)
 	TSet<TObjectPtr<APHObjectiveActor>> CompletedObjectives;
+
+	UPROPERTY(Transient)
+	TArray<FPHMatchResultRow> DepartedResultRows;
 	bool bMatchFlowHasStarted;
+	bool bLobbyReadyCountdownActive;
+	int32 ExpectedPlayerCount;
+	int32 EscapedPropCount;
 #if !UE_BUILD_SHIPPING
 	int32 TestMinimumPropPlayersOverride;
 #endif

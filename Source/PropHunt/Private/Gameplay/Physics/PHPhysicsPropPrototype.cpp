@@ -1,12 +1,14 @@
 #include "Gameplay/Physics/PHPhysicsPropPrototype.h"
 
 #include "Camera/CameraComponent.h"
+#include "Components/AudioComponent.h"
 #include "Components/InputComponent.h"
 #include "Components/StaticMeshComponent.h"
 #include "GameFramework/Controller.h"
 #include "GameFramework/SpringArmComponent.h"
 #include "Gameplay/PHCollisionChannels.h"
 #include "Gameplay/Physics/PHPhysicsPropDataAsset.h"
+#include "Gameplay/Physics/PHPhysicsPropPresentation.h"
 #include "Kismet/GameplayStatics.h"
 #include "Misc/CommandLine.h"
 #include "Misc/Parse.h"
@@ -495,41 +497,42 @@ void APHPhysicsPropPrototype::TryJump()
 	}
 
 	const FVector CurrentVelocity = PhysicsMesh->GetPhysicsLinearVelocity();
-	FVector HorizontalVelocity(CurrentVelocity.X, CurrentVelocity.Y, 0.0f);
+	FVector BoostDirection = FVector::ZeroVector;
 	const FVector2D RawInput(ServerForwardInput, ServerRightInput);
 	if (RawInput.SizeSquared() > FMath::Square(0.05f))
 	{
 		const FVector2D ClampedInput = RawInput.GetClampedToMaxSize(1.0f);
 		const FRotator YawRotation(0.0f, ServerViewYaw, 0.0f);
-		const FVector BoostDirection = (
+		BoostDirection = (
 			FRotationMatrix(YawRotation).GetUnitAxis(EAxis::X) * ClampedInput.X
-			+ FRotationMatrix(YawRotation).GetUnitAxis(EAxis::Y) * ClampedInput.Y).GetSafeNormal();
-		const float SafeBoostVelocity = FMath::Clamp(Definition->JumpHorizontalBoostVelocity, 0.0f, 1000.0f);
-		const float RedirectedSpeed = HorizontalVelocity.Size()
-			+ SafeBoostVelocity * ClampedInput.Size();
-		HorizontalVelocity = BoostDirection * RedirectedSpeed;
+			+ FRotationMatrix(YawRotation).GetUnitAxis(EAxis::Y) * ClampedInput.Y).GetClampedToMaxSize(1.0f);
 	}
 
 	const float SafeMaximumJumpHorizontalSpeed = FMath::Clamp(
 		Definition->MaximumJumpHorizontalSpeed,
 		FMath::Max(1.0f, Definition->MaximumHorizontalSpeed),
 		2500.0f);
-	HorizontalVelocity = HorizontalVelocity.GetClampedToMaxSize(SafeMaximumJumpHorizontalSpeed);
+	const FVector TargetVelocity = PHPhysicsPropPresentation::ComputeJumpTargetVelocity(
+		CurrentVelocity,
+		BoostDirection,
+		SafeJumpVelocity,
+		Definition->JumpHorizontalBoostVelocity,
+		SafeMaximumJumpHorizontalSpeed);
 
 	LastJumpTime = Now;
 	++JumpsUsed;
-	PhysicsMesh->SetPhysicsLinearVelocity(
-		FVector(HorizontalVelocity.X, HorizontalVelocity.Y, SafeJumpVelocity),
-		false);
+	const FVector JumpImpulse = (TargetVelocity - CurrentVelocity) * PhysicsMesh->GetMass();
+	PhysicsMesh->AddImpulse(JumpImpulse);
 	PhysicsMesh->WakeAllRigidBodies();
 	ForceNetUpdate();
 	UE_LOG(LogPHPhysicsProp, Log,
-		TEXT("Authoritative jump %d/%d accepted for %s: vertical=%.1f horizontal=%.1f grounded=%s."),
+		TEXT("Authoritative jump %d/%d accepted for %s: impulse=%.1f vertical=%.1f horizontal=%.1f grounded=%s."),
 		JumpsUsed,
 		SafeMaximumJumpCount,
 		*GetName(),
-		SafeJumpVelocity,
-		HorizontalVelocity.Size(),
+		JumpImpulse.Size(),
+		TargetVelocity.Z,
+		TargetVelocity.Size2D(),
 		bGrounded ? TEXT("yes") : TEXT("no"));
 }
 
@@ -701,9 +704,22 @@ void APHPhysicsPropPrototype::OnRep_Definition()
 
 void APHPhysicsPropPrototype::MulticastPlayImpactSound_Implementation(const FVector_NetQuantize ImpactLocation)
 {
-	if (Definition != nullptr && Definition->ImpactSound != nullptr)
+	UWorld* World = GetWorld();
+	if (World == nullptr || World->IsNetMode(NM_DedicatedServer)
+		|| Definition == nullptr || Definition->ImpactSound == nullptr)
 	{
-		UGameplayStatics::PlaySoundAtLocation(this, Definition->ImpactSound, ImpactLocation);
+		return;
+	}
+
+	UAudioComponent* AudioComponent = NewObject<UAudioComponent>(this);
+	if (AudioComponent != nullptr)
+	{
+		AudioComponent->bAutoActivate = false;
+		AudioComponent->bAutoDestroy = true;
+		Definition->ConfigureImpactAudioComponent(*AudioComponent);
+		AudioComponent->SetWorldLocation(ImpactLocation);
+		AudioComponent->RegisterComponent();
+		AudioComponent->Play();
 		UE_LOG(LogPHPhysicsProp, Log, TEXT("Impact sound multicast received for %s on local role %d at %s."),
 			*GetName(), static_cast<int32>(GetLocalRole()), *FVector(ImpactLocation).ToCompactString());
 	}

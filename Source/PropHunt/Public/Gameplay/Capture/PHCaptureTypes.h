@@ -12,8 +12,17 @@ enum class EPHPropCaptureState : uint8
 	Carried,
 	Retained,
 	Grace,
-	Eliminated
+	Eliminated,
+	Escaped
 };
+
+namespace PHCaptureFlow
+{
+	inline bool IsTerminal(const EPHPropCaptureState State)
+	{
+		return State == EPHPropCaptureState::Eliminated || State == EPHPropCaptureState::Escaped;
+	}
+}
 
 namespace PHCaptureFlow
 {
@@ -65,5 +74,33 @@ namespace PHCaptureFlow
 		return RetentionCount <= 1
 			? FMath::Max(0.0f, FirstRetentionDuration)
 			: FMath::Max(0.0f, SecondRetentionDuration);
+	}
+
+	inline bool ShouldAccelerateAllRetainedElimination(
+		const int32 ActivePropCount,
+		const int32 RetainedPropCount)
+	{
+		return ActivePropCount > 0 && RetainedPropCount == ActivePropCount;
+	}
+
+	inline bool PreservesKnockdownCycleProgress(
+		const EPHPropCaptureState PreviousState,
+		const EPHPropCaptureState NewState)
+	{
+		return (PreviousState == EPHPropCaptureState::Downed
+				&& NewState == EPHPropCaptureState::Carried)
+			|| (PreviousState == EPHPropCaptureState::Carried
+				&& NewState == EPHPropCaptureState::Downed);
+	}
+
+	inline float GetRecoveryProgressAfterHunterDrop(
+		const float CurrentProgress,
+		const float DropBonus)
+	{
+		return FMath::Clamp(
+			FMath::Clamp(CurrentProgress, 0.0f, 1.0f)
+				+ FMath::Clamp(DropBonus, 0.0f, 0.25f),
+			0.0f,
+			1.0f);
 	}
 }

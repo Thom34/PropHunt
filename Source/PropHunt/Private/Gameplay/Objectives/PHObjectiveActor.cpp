@@ -1,25 +1,29 @@
 #include "Gameplay/Objectives/PHObjectiveActor.h"
 
+#include "Characters/PHHunterCharacter.h"
 #include "Characters/PHPropCharacter.h"
 #include "Components/CapsuleComponent.h"
 #include "Components/SceneComponent.h"
 #include "Components/StaticMeshComponent.h"
+#include "Components/WidgetComponent.h"
 #include "Engine/World.h"
 #include "Game/PHGameMode.h"
 #include "Game/PHGameState.h"
 #include "Game/PHPlayerState.h"
 #include "Net/UnrealNetwork.h"
+#include "UI/PHObjectiveProgressWidget.h"
 #include "UObject/ConstructorHelpers.h"
 
 DEFINE_LOG_CATEGORY_STATIC(LogPHObjective, Log, All);
 
 APHObjectiveActor::APHObjectiveActor()
-	: InteractionDurationSeconds(8.0f)
+	: InteractionDurationSeconds(24.0f)
 	, InteractionDistance(225.0f)
 	, MaximumConcurrentInteractors(4)
 	, AdditionalInteractorContribution(0.5f)
 	, InterruptionPolicy(EPHObjectiveInterruptionPolicy::Preserve)
 	, ProgressRegressionPerSecond(0.1f)
+	, HunterMeleeRegressionFraction(0.10f)
 	, ObjectiveProgress(0.0f)
 	, bObjectiveActive(true)
 	, bCompleted(false)
@@ -61,6 +65,15 @@ APHObjectiveActor::APHObjectiveActor()
 	ProgressFill->SetCollisionEnabled(ECollisionEnabled::NoCollision);
 	ProgressFill->SetCanEverAffectNavigation(false);
 
+	ProgressWidgetComponent = CreateDefaultSubobject<UWidgetComponent>(TEXT("ProgressWidget"));
+	ProgressWidgetComponent->SetupAttachment(SceneRoot);
+	ProgressWidgetComponent->SetRelativeLocation(FVector(0.0f, 0.0f, 175.0f));
+	ProgressWidgetComponent->SetWidgetSpace(EWidgetSpace::Screen);
+	ProgressWidgetComponent->SetDrawSize(FVector2D(190.0f, 52.0f));
+	ProgressWidgetComponent->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+	ProgressWidgetComponent->SetGenerateOverlapEvents(false);
+	ProgressWidgetComponent->SetWidgetClass(UPHObjectiveProgressWidget::StaticClass());
+
 	static ConstructorHelpers::FObjectFinder<UStaticMesh> CubeMesh(TEXT("/Engine/BasicShapes/Cube.Cube"));
 	if (CubeMesh.Succeeded())
 	{
@@ -73,6 +86,15 @@ APHObjectiveActor::APHObjectiveActor()
 void APHObjectiveActor::BeginPlay()
 {
 	Super::BeginPlay();
+	if (ProgressWidgetComponent != nullptr)
+	{
+		ProgressWidgetComponent->InitWidget();
+		if (UPHObjectiveProgressWidget* ProgressWidget = Cast<UPHObjectiveProgressWidget>(
+			ProgressWidgetComponent->GetUserWidgetObject()))
+		{
+			ProgressWidget->SetObjective(this);
+		}
+	}
 	RefreshPresentation();
 }
 
@@ -224,6 +246,42 @@ void APHObjectiveActor::ServerEndInteraction(APHPropCharacter& PropCharacter)
 	}
 }
 
+bool APHObjectiveActor::ServerApplyHunterMeleeRegression(APHHunterCharacter& HunterCharacter)
+{
+	const UWorld* World = GetWorld();
+	const APHPlayerState* HunterPlayerState = HunterCharacter.GetPlayerState<APHPlayerState>();
+	const APHGameState* PHGameState = World != nullptr ? World->GetGameState<APHGameState>() : nullptr;
+	if (!HasAuthority() || World == nullptr || !HunterCharacter.HasAuthority()
+		|| !bObjectiveActive || bCompleted || ObjectiveProgress <= KINDA_SMALL_NUMBER
+		|| HunterPlayerState == nullptr || HunterPlayerState->GetPlayerRole() != EPHPlayerRole::Hunter
+		|| PHGameState == nullptr || PHGameState->GetMatchPhase() != EPHMatchPhase::Hunt)
+	{
+		return false;
+	}
+
+	const float PreviousProgress = ObjectiveProgress;
+	ObjectiveProgress = PHObjectiveFlow::ApplyHunterMeleeRegression(
+		ObjectiveProgress,
+		HunterMeleeRegressionFraction);
+	const float AppliedRegression = PreviousProgress - ObjectiveProgress;
+	if (AppliedRegression <= KINDA_SMALL_NUMBER)
+	{
+		return false;
+	}
+
+	RefreshPresentation();
+	BP_OnObjectiveStateChanged();
+	BP_OnObjectiveHitByHunter(AppliedRegression);
+	ForceNetUpdate();
+	UE_LOG(LogPHObjective, Log,
+		TEXT("Hunter %s regressed objective %s by %.1f%% to %.1f%%."),
+		*HunterCharacter.GetName(),
+		*GetName(),
+		AppliedRegression * 100.0f,
+		ObjectiveProgress * 100.0f);
+	return true;
+}
+
 void APHObjectiveActor::ResetForMatch(const bool bShouldBeActive)
 {
 	if (!HasAuthority())
@@ -279,6 +337,10 @@ void APHObjectiveActor::RefreshPresentation()
 		ProgressFill->SetRelativeScale3D(FVector(0.08f, 0.08f, HalfHeight / 50.0f));
 		ProgressFill->SetRelativeLocation(FVector(0.0f, -14.0f, 82.0f + HalfHeight));
 	}
+	if (ProgressWidgetComponent != nullptr)
+	{
+		ProgressWidgetComponent->SetVisibility(bVisible && !bCompleted);
+	}
 }
 
 void APHObjectiveActor::RefreshInteractorCount()
@@ -307,6 +369,10 @@ void APHObjectiveActor::CompleteObjective()
 	{
 		if (APHPropCharacter* PropCharacter = Interactor.Get())
 		{
+			if (APHPlayerState* InteractorState = PropCharacter->GetPlayerState<APHPlayerState>())
+			{
+				InteractorState->RecordObjectiveCompletion();
+			}
 			ServerEndInteraction(*PropCharacter);
 		}
 	}

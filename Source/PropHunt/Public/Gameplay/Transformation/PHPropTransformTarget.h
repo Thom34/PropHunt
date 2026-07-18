@@ -27,6 +27,7 @@ public:
 	const UPHPropFormDataAsset* GetPropForm() const { return PropForm; }
 
 	UPrimitiveComponent* GetActiveSelectionCollision() const;
+	void SetLocallyHighlighted(bool bHighlighted);
 
 private:
 	void ApplyFormDefinition();

@@ -1882,9 +1882,9 @@ void UPHMatchmakingWidget::RefreshPodiumInviteButtons()
 		}
 
 		FVector2D InvitePosition;
-		// Keep the empty-slot action visually attached to the missing character,
-		// around upper-body height rather than floating far above the lineup.
-		const FVector InviteWorldPosition = Marker->GetActorLocation() + FVector(0.0f, 0.0f, 125.0f);
+		// Attach the empty-slot action to the future nameplate: slightly above
+		// the label rather than floating over the missing character's head.
+		const FVector InviteWorldPosition = Marker->GetActorLocation() - FVector(0.0f, 0.0f, 65.0f);
 		if (!UWidgetLayoutLibrary::ProjectWorldLocationToWidgetPosition(
 			PlayerController, InviteWorldPosition, InvitePosition, false))
 		{

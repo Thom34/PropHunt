@@ -9,21 +9,21 @@ Il s'applique au projet `C:\Users\Thomas\Documents\Unreal Projects\PropHunt\Prop
 | Champ | Valeur |
 |---|---|
 | Série | `P9.1` |
-| Version | `0.1.1907001` |
+| Version | `0.1.1907002` |
 | Protocole | `91` |
-| Release VPS/NOVA | `build-prophunt-v0.1.1907001` |
-| Steam beta BuildID | `24283752` |
-| Manifest dépôt `1551301` | `3076020675353043028` |
+| Release VPS/NOVA | `build-prophunt-v0.1.1907002` |
+| Steam beta BuildID | `24285008` |
+| Manifest dépôt `1551301` | `3555985388973837803` |
 | Exécutable client SHA-256 | `a6406ad31b3f40cedb3082bc9145b66a4b11a35cd484dcfaa4a5a27982e5b4d5` |
-| IoStore UTOC SHA-256 | `4129390e50c86d099ffd3021b81e046938c36d85d3ee4a4f868e5f3d9014f9c6` |
+| IoStore UTOC SHA-256 | `30c45d6a28c2772dee8c1f8a13eccd3d5d956f005c0a136726172ff4ce88687f` |
 
 Gateway, NOVA, serveur Linux et client Steam beta sont publiés. Le test humain final à deux comptes reste une
 gate distincte et ne doit pas être déduit du succès de SteamPipe.
 
-Cette table décrit la publication active, pas le checkout actuel. Les sources locales ont changé après ce
-BuildID et le candidat local est désormais `0.1.1907002`. Ne jamais reconstruire `0.1.1907001`. Le nouveau contrat
-lobby `display_name/survivor_players` exige un déploiement gateway + serveur/NOVA avant Steam ; l'ancienne gateway
-refuse le nouveau champ strict avec `HTTP 400 invalid_contract`.
+Cette table décrit la publication technique active. Le contrat lobby `display_name/survivor_players`, la gateway,
+la route NOVA, le serveur Linux et le client Steam sont alignés sur `0.1.1907002`. Le test humain final reste
+ouvert. Ne jamais reconstruire `0.1.1907002` : toute nouvelle publication doit d'abord passer à
+`0.1.1907003` ou supérieur.
 
 ## Résumé en une commande
 

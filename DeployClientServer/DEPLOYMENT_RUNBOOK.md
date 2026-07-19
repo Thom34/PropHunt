@@ -1,0 +1,197 @@
+# Runbook de publication PropHunt
+
+Ce document est la procédure opérateur canonique pour construire, déployer et prouver une release PropHunt.
+Il s'applique au projet `C:\Users\Thomas\Documents\Unreal Projects\PropHunt\PropHunt.uproject` avec le moteur
+`K:\UE58`. Il ne faut jamais remplacer ces chemins par un projet récent d'Unreal ou par un autre checkout.
+
+## Résumé en une commande
+
+Après la préparation locale Steam décrite plus bas :
+
+```powershell
+.\DeployClientServer\Deploy-All.cmd -Module All -FullCook
+```
+
+L'ordre est imposé :
+
+1. contrôle de version ;
+2. build/cook client et serveur ;
+3. déploiement VPS coordonné gateway + release Linux + route NOVA ;
+4. contrôle `/healthz` ;
+5. publication du client Steam `beta` en dernier.
+
+Un échec avant Steam arrête le pipeline. Le client n'est donc jamais publié vers un plan de contrôle qui n'est
+pas prêt à accepter exactement sa version.
+
+Le module VPS coordonné exige le checkout privé `SourceArt` présent localement, car il embarque le paquet gateway
+et ses tests. Il refuse explicitement d'opérer si ce paquet n'est pas disponible.
+
+Pour afficher le plan sans build, SSH, SCP, restart ou upload Steam :
+
+```powershell
+.\DeployClientServer\Deploy-All.cmd -Module All -PlanOnly
+```
+
+## Source de vérité
+
+`BuildTools/Version/PropHuntVersion.json` porte la version complète. Le contrôle
+`BuildTools/Version/Test-PropHuntVersion.ps1` refuse le pipeline si ses projections divergent :
+
+- série réseau, par exemple `P9.1` ;
+- release client/serveur, par exemple `0.1.1907001` ;
+- protocole entier Unreal/gateway, par exemple `91` ;
+- `BuildIdOverride` Steam ;
+- `build_id` et nom de release NOVA ;
+- description SteamPipe.
+
+Une itération déjà publiée n'est jamais reconstruite sous le même identifiant. Incrémenter d'abord la version,
+exécuter `-Module Validate`, puis seulement construire.
+
+## Modules opérateur
+
+| Besoin | Commande | Mutation externe |
+|---|---|---|
+| Vérifier la cohérence | `Deploy-All.cmd -Module Validate` | aucune |
+| Construire les deux packages | `Deploy-All.cmd -Module Build -FullCook` | aucune |
+| Déployer tout le VPS | `Deploy-All.cmd -Module Vps` | gateway, release et route NOVA |
+| Déployer seulement le binaire serveur | `Deploy-All.cmd -Module ServerOnly` | release Linux seulement |
+| Publier seulement le client | `Deploy-All.cmd -Module Steam` | branche Steam `beta` |
+| Tout publier | `Deploy-All.cmd -Module All -FullCook` | VPS puis Steam |
+
+Les scripts unitaires restent utilisables directement :
+
+```powershell
+.\DeployClientServer\Build-ClientServer.cmd -Target Client
+.\DeployClientServer\Build-ClientServer.cmd -Target Server -FullCook
+.\DeployClientServer\Push-Coordinated-Vps.cmd
+.\DeployClientServer\Push-Server-Vps.cmd -BundleMode Auto
+.\DeployClientServer\Push-Client-Steam.cmd
+```
+
+`ServerOnly` est volontairement un outil de maintenance. Pour une nouvelle version visible par les joueurs,
+utiliser `Vps` afin de garder gateway, NOVA et serveur alignés.
+
+## Préparation locale unique de SteamCMD
+
+Les deux emplacements privés attendus sont :
+
+```text
+BuildTools/Steam/steamcmd/steamcmd.exe
+BuildTools/Steam/steam_build.config.ini
+```
+
+Ils sont ignorés par Git. Le fichier INI contient le compte de build et ne doit jamais être affiché, journalisé,
+commité ou transmis au VPS. Il peut omettre le mot de passe si SteamCMD dispose déjà d'une session authentifiée.
+
+Le pipeline PropHunt ne lit aucun autre projet. Si l'opérateur veut importer une installation SteamCMD existante,
+il le fait une seule fois avec une autorisation explicite, puis vérifie que les deux fichiers ci-dessus existent.
+Le VDF utilisé reste toujours `BuildTools/Steam/app_build_1551300.vdf` : AppID `1551300`, dépôt `1551301`,
+branche privée `beta`.
+
+## Packages canoniques
+
+| Artefact | Chemin fixe |
+|---|---|
+| Client Win64 Shipping | `package/client/Windows` |
+| Serveur Linux Shipping | `package/server/LinuxServer` |
+| Bundle de transfert VPS | `package/vps-bundle` |
+| Logs SteamPipe | `Saved/SteamBuildOutput` |
+| Anciennes générations de bundle | `Saved/Deployments/bundle-backups` |
+
+Ne jamais choisir manuellement un ancien dossier `phase*`, `final*` ou daté comme source de publication.
+
+Le paramètre `-BundleMode` contrôle le bundle VPS :
+
+- `Auto` : réutilise le bundle complet de la bonne version, sinon archive l'ancien et le régénère ;
+- `Reuse` : refuse si les quatre fichiers attendus ne sont pas déjà présents ;
+- `Regenerate` : archive toujours le bundle existant puis en crée un nouveau.
+
+Les SHA-256 sont recalculés localement avant SCP puis revérifiés sur Debian.
+
+## Déroulé du module VPS coordonné
+
+`Push-Coordinated-Vps.ps1` réalise une transaction opérationnelle bornée :
+
+1. exécute le garde de version et les tests gateway locaux ;
+2. refuse si un worker `PropHuntServer` est actif ;
+3. vérifie que le contrat NOVA versionné est déjà installé ;
+4. arrête seulement `prophunt-gateway` ;
+5. sauvegarde `/opt/prophunt-gateway`, les configurations gateway/NOVA et la base SQLite ;
+6. installe le paquet Python gateway et configure protocole + `project_build_id` ;
+7. laisse la gateway arrêtée pendant l'installation du serveur ;
+8. transfère le bundle, valide ses hashes, ses modes Linux, son ELF, Steamworks et ses dépendances ;
+9. active `/home/ue-game/releases/<nova_release_name>` avec une release de rollback ;
+10. remplace l'unique route `build-prophunt*` dans `/etc/nova-orchestrator/config.toml` ;
+11. valide le TOML, redémarre uniquement `nova-orchestrator` et attend son socket ;
+12. redémarre la gateway et exige un `/healthz` correspondant exactement à la version ;
+13. conserve la sauvegarde sous `/home/ue-game/backups/prophunt-<deployment_id>`.
+
+Le module ne redémarre pas nginx, MariaDB, `nova-worker-broker` ou les services d'un autre jeu. Il ne modifie pas
+`/home/ue-game/current`.
+
+Si la préparation, le push serveur, la route ou le health échouent, le script restaure automatiquement gateway,
+config NOVA, config gateway et SQLite depuis la sauvegarde. La nouvelle release Linux peut rester installée mais
+elle n'est plus routée ; c'est sûr et utile pour le diagnostic.
+
+## Pré-vol avant une publication importante
+
+```powershell
+.\DeployClientServer\Deploy-All.cmd -Module Validate
+
+$env:PYTHONPATH = (Resolve-Path '.\SourceArt\Deploy\PropHuntGateway').Path
+python -m unittest discover -s '.\SourceArt\Deploy\PropHuntGateway\tests' -v
+Remove-Item Env:PYTHONPATH
+
+.\DeployClientServer\Deploy-All.cmd -Module Build -FullCook
+.\BuildTools\Steam\Test-PropHuntSteamPackage.ps1
+.\DeployClientServer\Deploy-All.cmd -Module All -PlanOnly
+```
+
+Pour une modification du contrat NOVA lui-même, le changement doit d'abord passer sa suite ciblée et la suite
+MariaDB NOVA. Le module VPS coordonné vérifie la présence du contrat versionné mais n'applique pas silencieusement
+un nouveau patch d'infrastructure.
+
+## Preuves à conserver après publication
+
+### VPS
+
+```bash
+systemctl is-active nova-orchestrator prophunt-gateway nova-worker-broker nginx
+curl -fsS http://127.0.0.1:8790/healthz
+grep -E 'build-prophunt' /etc/nova-orchestrator/config.toml
+systemctl list-units 'nova-unreal-worker@*.service' --state=running --no-pager
+```
+
+Le health doit retourner `ok=true`, le protocole du manifeste et la version complète. Hors smoke, aucun worker ne
+doit rester actif.
+
+### Steam
+
+Dans `Saved/SteamBuildOutput/app_build_1551300.log`, conserver la ligne :
+
+```text
+Successfully finished AppID 1551300 build (BuildID ...)
+```
+
+Conserver aussi le nouveau manifest du dépôt `1551301`. Un nouveau candidat doit produire un nouveau BuildID et
+un nouveau manifest ; ne jamais recopier les identifiants de la release précédente.
+
+### Test humain final
+
+Avec deux comptes Steam réellement mis à jour : invitation ou inscription, même salon, countdown, allocation,
+WaitingRoom, gameplay, Results, retour menu, nouvelle inscription, puis arrêt du worker et libération des ports.
+Ce test reste une gate humaine : l'automatisation ne doit pas le déclarer réussi à la place des joueurs.
+
+## Diagnostic rapide
+
+- `client_update_required` : comparer la version client, `/healthz` et la route NOVA.
+- bundle refusé car existant : utiliser `-BundleMode Auto` ou `Regenerate`, jamais supprimer au hasard.
+- permission sous `/home/ue-game/releases` : le script d'activation doit passer par `sudo -n`.
+- bits exécutables absents : le push normalise les modes après extraction Windows.
+- gateway inactive après NOVA : vérifier le socket `/run/nova-orchestrator/api.sock`, puis les journaux des deux
+  services ; ne pas redémarrer toute la machine.
+- SteamCMD absent : préparer les deux fichiers privés locaux, sans modifier le VDF ni emprunter le script d'un
+  autre projet.
+
+Les incidents historiques détaillés restent consignés dans
+`SourceArt/Docs/22_DEPLOY_PIPELINE_TROUBLESHOOTING.md`.

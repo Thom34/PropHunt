@@ -1,5 +1,11 @@
 [CmdletBinding()]
-param([string]$VpsHost, [string]$ReleaseName)
+param(
+    [string]$VpsHost,
+    [string]$ReleaseName,
+    [ValidateSet('Auto', 'Reuse', 'Regenerate')]
+    [string]$BundleMode = 'Auto',
+    [switch]$PlanOnly
+)
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
@@ -18,21 +24,87 @@ $buildVersion = [string]$versionManifest.release_version
 
 $serverRoot = Join-Path $projectRoot $config.ServerContent
 $bundleRoot = Join-Path $projectRoot $config.VpsBundle
-& (Join-Path $projectRoot 'BuildTools\Server\New-PropHuntVpsBundle.ps1') `
-    -PackageRoot $serverRoot `
-    -OutputDirectory $bundleRoot `
-    -ProtocolVersion $protocol `
-    -BuildVersion $buildVersion `
-    -NovaReleaseName $ReleaseName
-
 $bundleFiles = @(
     (Join-Path $bundleRoot "PropHuntServer-Linux-$buildVersion-Runtime.tar.gz"),
     (Join-Path $bundleRoot "PropHuntServer-Ops-$buildVersion.tar.gz"),
     (Join-Path $bundleRoot "PropHuntServer-$buildVersion-manifest.json"),
     (Join-Path $bundleRoot 'SHA256SUMS')
 )
+
+$bundleComplete = @($bundleFiles | Where-Object { Test-Path -LiteralPath $_ -PathType Leaf }).Count -eq $bundleFiles.Count
+$mustGenerate = $BundleMode -eq 'Regenerate' -or -not $bundleComplete
+if ($BundleMode -eq 'Auto' -and $bundleComplete) {
+    $bundleManifestPath = Join-Path $bundleRoot "PropHuntServer-$buildVersion-manifest.json"
+    $bundleManifest = Get-Content -LiteralPath $bundleManifestPath -Raw | ConvertFrom-Json
+    if (
+        [string]$bundleManifest.buildVersion -ne $buildVersion -or
+        [int]$bundleManifest.protocolVersion -ne $protocol -or
+        [string]$bundleManifest.releaseName -ne $ReleaseName
+    ) {
+        $mustGenerate = $true
+    } else {
+        $generatedAt = [DateTimeOffset]::Parse([string]$bundleManifest.generatedAtUtc).UtcDateTime
+        $newerInput = Get-ChildItem -LiteralPath $serverRoot, (Join-Path $projectRoot 'BuildTools\Server\Linux') -Recurse -File |
+            Where-Object { $_.LastWriteTimeUtc -gt $generatedAt } |
+            Select-Object -First 1
+        if ($null -ne $newerInput) {
+            Write-Host "[bundle] Entrée plus récente détectée: $($newerInput.FullName)"
+            $mustGenerate = $true
+        }
+    }
+}
+if ($BundleMode -eq 'Reuse' -and -not $bundleComplete) {
+    throw "Bundle VPS réutilisable incomplet: $bundleRoot"
+}
+if ($PlanOnly -and $mustGenerate) {
+    Write-Host "[PLAN UNIQUEMENT] Le bundle serait archivé/régénéré avec BundleMode=$BundleMode; aucun fichier ni hôte modifié."
+    exit 0
+}
+
+if ($mustGenerate -and (Test-Path -LiteralPath $bundleRoot)) {
+    $backupRoot = Join-Path $projectRoot 'Saved\Deployments\bundle-backups'
+    [System.IO.Directory]::CreateDirectory($backupRoot) | Out-Null
+    $backupPath = Join-Path $backupRoot ((Get-Date -Format 'yyyyMMdd-HHmmss') + '-' + (Split-Path -Leaf $bundleRoot))
+    if (Test-Path -LiteralPath $backupPath) { throw "Sauvegarde bundle déjà présente: $backupPath" }
+    Move-Item -LiteralPath $bundleRoot -Destination $backupPath
+    Write-Host "[bundle] Ancien bundle archivé -> $backupPath"
+}
+
+if ($mustGenerate) {
+    & (Join-Path $projectRoot 'BuildTools\Server\New-PropHuntVpsBundle.ps1') `
+        -PackageRoot $serverRoot `
+        -OutputDirectory $bundleRoot `
+        -ProtocolVersion $protocol `
+        -BuildVersion $buildVersion `
+        -NovaReleaseName $ReleaseName
+} else {
+    Write-Host "[bundle] Bundle $buildVersion existant réutilisé -> $bundleRoot"
+}
+
 foreach ($file in $bundleFiles) {
     if (-not (Test-Path -LiteralPath $file -PathType Leaf)) { throw "Bundle VPS incomplet: $file" }
+}
+
+$checksumPath = Join-Path $bundleRoot 'SHA256SUMS'
+foreach ($line in Get-Content -LiteralPath $checksumPath) {
+    if ($line -notmatch '^([0-9a-fA-F]{64})\s+(.+)$') { throw "Ligne SHA256SUMS invalide: $line" }
+    $expectedHash = $Matches[1].ToLowerInvariant()
+    $hashedFile = Join-Path $bundleRoot $Matches[2]
+    if (-not (Test-Path -LiteralPath $hashedFile -PathType Leaf)) { throw "Fichier SHA256SUMS absent: $hashedFile" }
+    $stream = [System.IO.File]::OpenRead($hashedFile)
+    try {
+        $sha = [System.Security.Cryptography.SHA256]::Create()
+        try { $actualHash = ([BitConverter]::ToString($sha.ComputeHash($stream)) -replace '-', '').ToLowerInvariant() }
+        finally { $sha.Dispose() }
+    } finally {
+        $stream.Dispose()
+    }
+    if ($actualHash -ne $expectedHash) { throw "SHA-256 local invalide: $hashedFile" }
+}
+Write-Host '[bundle] SHA-256 locaux validés.'
+if ($PlanOnly) {
+    Write-Host "[PLAN UNIQUEMENT] Bundle prêt pour $ReleaseName; aucun SSH/SCP exécuté."
+    exit 0
 }
 
 $remoteUpload = "$($config.VpsIncomingRoot)/$ReleaseName.upload"
@@ -63,6 +135,20 @@ install -d -m 0750 "${stage}" "${stage}/ops"
 tar -xzf "PropHuntServer-Linux-${build_version}-Runtime.tar.gz" -C "${stage}"
 tar -xzf "PropHuntServer-Ops-${build_version}.tar.gz" -C "${stage}/ops"
 cp "PropHuntServer-${build_version}-manifest.json" SHA256SUMS "${stage}/"
+
+# Les archives sont produites sous Windows : restaurer explicitement les modes
+# attendus par le pré-vol Debian avant de qualifier puis activer la release.
+chmod -R u=rwX,g=rX,o= "${stage}"
+chmod 0750 \
+  "${stage}/PropHuntServer.sh" \
+  "${stage}/PropHunt/Binaries/Linux/PropHuntServer-Linux-Shipping" \
+  "${stage}/ops/preflight-prophunt-server.sh" \
+  "${stage}/ops/test-vps-bundle-local.sh"
+for optional_script in run-prophunt-server.sh audit-prophunt-vps-readonly.sh; do
+  if [[ -f "${stage}/ops/${optional_script}" ]]; then
+    chmod 0750 "${stage}/ops/${optional_script}"
+  fi
+done
 bash "${stage}/ops/preflight-prophunt-server.sh" --package "${stage}" --package-only
 
 rm -rf -- "${rollback}"
@@ -74,6 +160,6 @@ rm -rf -- "${upload}"
 printf '[OK] Release active remplacee: %s\n' "${release}"
 '@
 
-$remoteScript | & ssh $VpsHost "bash -s -- '$ReleaseName' '$buildVersion' '$remoteUpload' '$($config.VpsReleaseRoot)'"
+$remoteScript | & ssh $VpsHost "sudo -n bash -s -- '$ReleaseName' '$buildVersion' '$remoteUpload' '$($config.VpsReleaseRoot)'"
 if ($LASTEXITCODE -ne 0) { throw 'Activation atomique du serveur VPS en echec.' }
 Write-Host "[OK] Serveur PropHunt envoye sur $VpsHost dans $ReleaseName."

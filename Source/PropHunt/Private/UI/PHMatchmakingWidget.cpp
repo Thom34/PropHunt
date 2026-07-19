@@ -48,7 +48,10 @@ UTextBlock* AddButtonLabel(UWidgetTree& WidgetTree, UButton& Button, const TCHAR
 	return Label;
 }
 
-void ApplyRoundedButtonStyle(UButton& Button, const FLinearColor& BaseColor)
+void ApplyRoundedButtonStyle(
+	UButton& Button,
+	const FLinearColor& BaseColor,
+	const float Radius = 12.0f)
 {
 	FButtonStyle Style = Button.GetStyle();
 	auto ConfigureBrush = [](FSlateBrush& Brush, const FLinearColor& Color, const float Radius)
@@ -60,10 +63,10 @@ void ApplyRoundedButtonStyle(UButton& Button, const FLinearColor& BaseColor)
 		Brush.OutlineSettings.Color = FSlateColor(FLinearColor(0.42f, 0.49f, 0.58f, 0.55f));
 		Brush.OutlineSettings.Width = 1.0f;
 	};
-	ConfigureBrush(Style.Normal, BaseColor, 12.0f);
-	ConfigureBrush(Style.Hovered, BaseColor * 1.24f, 12.0f);
-	ConfigureBrush(Style.Pressed, BaseColor * 0.78f, 12.0f);
-	ConfigureBrush(Style.Disabled, FLinearColor(BaseColor.R, BaseColor.G, BaseColor.B, 0.35f), 12.0f);
+	ConfigureBrush(Style.Normal, BaseColor, Radius);
+	ConfigureBrush(Style.Hovered, BaseColor * 1.24f, Radius);
+	ConfigureBrush(Style.Pressed, BaseColor * 0.78f, Radius);
+	ConfigureBrush(Style.Disabled, FLinearColor(BaseColor.R, BaseColor.G, BaseColor.B, 0.35f), Radius);
 	Button.SetStyle(Style);
 	Button.SetBackgroundColor(FLinearColor::White);
 }
@@ -264,7 +267,12 @@ void UPHMatchmakingWidget::NativeOnInitialized()
 		UButton* PodiumButton = WidgetTree->ConstructWidget<UButton>(
 			UButton::StaticClass(),
 			*FString::Printf(TEXT("InvitePodiumButton%d"), SlotIndex + 1));
-		ApplyRoundedButtonStyle(*PodiumButton, FLinearColor(0.012f, 0.075f, 0.11f, 0.94f));
+		// 46 x 46 with a fixed 23 px radius produces a true circular action,
+		// including its outline, in every interaction state.
+		ApplyRoundedButtonStyle(
+			*PodiumButton,
+			FLinearColor(0.012f, 0.075f, 0.11f, 0.94f),
+			23.0f);
 		PodiumButton->SetVisibility(ESlateVisibility::Collapsed);
 		UTextBlock* PlusLabel = AddButtonLabel(
 			*WidgetTree,

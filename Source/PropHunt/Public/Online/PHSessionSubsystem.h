@@ -373,7 +373,7 @@ private:
 
 	/** Exact client/server/gateway release identifier. Dotted because NOVA build IDs are strings. */
 	UPROPERTY(Config)
-	FString ReleaseVersion = TEXT("0.1.1907001");
+	FString ReleaseVersion = TEXT("0.1.1907002");
 
 	UPROPERTY(Config)
 	float JoinedTravelConfirmationTimeoutSeconds = 30.0f;

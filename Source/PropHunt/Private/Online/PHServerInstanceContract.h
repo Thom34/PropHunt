@@ -38,7 +38,7 @@ struct FPHAdmissionRosterSnapshot
 namespace PHServerInstanceContract
 {
 	inline constexpr int32 ProtocolVersion = 91;
-	inline constexpr const TCHAR* BuildId = TEXT("0.1.1907001");
+	inline constexpr const TCHAR* BuildId = TEXT("0.1.1907002");
 	inline constexpr int32 MinimumRosterPlayers = 2;
 	inline constexpr int32 MaximumRosterPlayers = 5;
 

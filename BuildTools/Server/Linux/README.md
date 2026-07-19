@@ -38,8 +38,8 @@ Depuis la racine canonique du projet :
   -PackageRoot '.\package\server\LinuxServer' `
   -OutputDirectory '.\package\vps-bundle' `
   -ProtocolVersion 91 `
-  -BuildVersion '0.1.1907001' `
-  -NovaReleaseName 'build-prophunt-v0.1.1907001'
+  -BuildVersion '0.1.1907002' `
+  -NovaReleaseName 'build-prophunt-v0.1.1907002'
 ```
 
 Le générateur refuse tout chemin extérieur au dépôt et tout écrasement. Par défaut, il lit `ProtocolVersion`

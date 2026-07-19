@@ -57,7 +57,7 @@ private:
 	FString HeartbeatMapName;
 
 	UPROPERTY(Config)
-	FString NOVAProjectBuildId = TEXT("0.1.1907001");
+	FString NOVAProjectBuildId = TEXT("0.1.1907002");
 
 	FTimerHandle HeartbeatTimerHandle;
 	uint64 HeartbeatSequence = 0;

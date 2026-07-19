@@ -1,8 +1,8 @@
 {
   "release_series": "P9.1",
-  "release_version": "0.1.1907001",
+  "release_version": "0.1.1907002",
   "protocol_version": 91,
-  "compatibility_build_id": 1907001,
-  "nova_build_id": "0.1.1907001",
-  "nova_release_name": "build-prophunt-v0.1.1907001"
+  "compatibility_build_id": 1907002,
+  "nova_build_id": "0.1.1907002",
+  "nova_release_name": "build-prophunt-v0.1.1907002"
 }

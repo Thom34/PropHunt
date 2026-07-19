@@ -74,8 +74,8 @@ if ($null -eq $waitingRoomEntry) {
 if ($appBuild -notmatch '"setlive"\s+"beta"') {
     throw 'Le build Steam ne cible pas exclusivement la branche beta.'
 }
-if ($appBuild -notmatch 'P9\.1' -or $appBuild -notmatch '0\.1\.1907001' -or $appBuild -notmatch 'NOVA' -or $appBuild -notmatch 'WaitingRoom') {
-	throw 'La description Steam doit identifier P9.1, le build 0.1.1907001, NOVA et WaitingRoom.'
+if ($appBuild -notmatch 'P9\.1' -or $appBuild -notmatch '0\.1\.1907002' -or $appBuild -notmatch 'NOVA' -or $appBuild -notmatch 'WaitingRoom') {
+	throw 'La description Steam doit identifier P9.1, le build 0.1.1907002, NOVA et WaitingRoom.'
 }
 $hasPdbExclusion = $depotBuild -match '"FileExclusion"\s+"\*\.pdb"'
 $hasSteamAppIdExclusion = $depotBuild -match '"FileExclusion"\s+"steam_appid\.txt"'
@@ -91,7 +91,7 @@ if ($embeddedSteamAppIds.Count -ne 0) {
 $exeHash = Get-Sha256Hex -LiteralPath (Join-Path $appContentRoot 'PropHunt.exe')
 $utocHash = Get-Sha256Hex -LiteralPath (Join-Path $appContentRoot 'PropHunt\Content\Paks\PropHunt-Windows.utoc')
 
-Write-Host '[OK] Package Steam beta P9.1 / 0.1.1907001 NOVA WaitingRoom cohérent.'
+Write-Host '[OK] Package Steam beta P9.1 / 0.1.1907002 NOVA WaitingRoom cohérent.'
 Write-Host "content_root=$appContentRoot"
 Write-Host "exe_sha256=$exeHash"
 Write-Host "utoc_sha256=$utocHash"

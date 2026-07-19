@@ -31,6 +31,7 @@ if ([string]$config.EngineRoot -ne $canonicalEngine) {
 }
 Assert-Leaf $projectFile 'Projet Unreal canonique'
 Assert-Leaf (Join-Path $canonicalEngine 'Engine\Binaries\Win64\UnrealEditor-Cmd.exe') 'UnrealEditor-Cmd canonique'
+Assert-Leaf (Join-Path $canonicalEngine 'Engine\Build\BatchFiles\Build.bat') 'Build Unreal canonique'
 
 & (Join-Path $projectRoot 'BuildTools\Version\Test-PropHuntVersion.ps1')
 
@@ -90,6 +91,11 @@ if (-not $SkipGatewayTests) {
 }
 
 if (-not $SkipUnrealTests) {
+    $buildScript = Join-Path $canonicalEngine 'Engine\Build\BatchFiles\Build.bat'
+    & $buildScript PropHuntEditor Win64 Development $canonicalProject -WaitMutex -NoHotReload
+    if ($LASTEXITCODE -ne 0) {
+        throw "Compilation PropHuntEditor préalable aux tests en échec (code $LASTEXITCODE)."
+    }
     $logRoot = Join-Path $projectRoot 'Saved\ReleaseReadiness'
     [System.IO.Directory]::CreateDirectory($logRoot) | Out-Null
     $automationLog = Join-Path $logRoot 'UnrealAutomation.log'

@@ -8,14 +8,14 @@ $projectRoot = [System.IO.Path]::GetFullPath((Join-Path $scriptRoot '..\..'))
 $manifestPath = Join-Path $scriptRoot 'PropHuntVersion.json'
 $version = Get-Content -LiteralPath $manifestPath -Raw | ConvertFrom-Json
 
-if ($version.release_series -ne 'P9.1' -or $version.release_version -ne '0.1.1907001') {
-    throw 'Le manifeste de version courant doit identifier P9.1 / 0.1.1907001.'
+if ($version.release_series -ne 'P9.1' -or $version.release_version -ne '0.1.1907002') {
+    throw 'Le manifeste de version courant doit identifier P9.1 / 0.1.1907002.'
 }
 if ($version.nova_build_id -ne $version.release_version) {
     throw 'Le build_id NOVA doit être identique à la version client/serveur.'
 }
-if ([int]$version.compatibility_build_id -ne 1907001 -or [int]$version.protocol_version -ne 91) {
-    throw 'La projection numérique de P9.1 / 0.1.1907001 est incohérente.'
+if ([int]$version.compatibility_build_id -ne 1907002 -or [int]$version.protocol_version -ne 91) {
+    throw 'La projection numérique de P9.1 / 0.1.1907002 est incohérente.'
 }
 if ($version.nova_release_name -ne "build-prophunt-v$($version.release_version)") {
     throw 'Le nom de release NOVA ne correspond pas au build_id versionné.'

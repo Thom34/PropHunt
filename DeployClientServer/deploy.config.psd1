@@ -10,7 +10,7 @@
     SteamCredentials = 'BuildTools\Steam\steam_build.config.ini'
     SteamAppBuild = 'BuildTools\Steam\app_build_1551300.vdf'
     VpsHost = 'vps'
-    VpsReleaseName = 'build-prophunt-v0.1.1907001'
+    VpsReleaseName = 'build-prophunt-v0.1.1907002'
     VpsIncomingRoot = '/home/ue-game/incoming'
     VpsReleaseRoot = '/home/ue-game/releases'
 }

@@ -234,7 +234,7 @@ bool FPHSteamMatchmakingDefaultsTest::RunTest(const FString& Parameters)
 		TestEqual(TEXT("Steam network protocol isolates incompatible beta builds"),
 			SessionDefaults->GetProtocolVersion(), 91);
 		TestEqual(TEXT("Client and dedicated server share the exact release identifier"),
-			SessionDefaults->GetReleaseVersion(), FString(TEXT("0.1.1907001")));
+			SessionDefaults->GetReleaseVersion(), FString(TEXT("0.1.1907002")));
 		TestTrue(TEXT("Dedicated servers publish their session automatically"),
 			SessionDefaults->GetAutoCreateDedicatedSession());
 		TestTrue(TEXT("Steam client travel confirmation has a non-zero grace period"),
@@ -313,15 +313,15 @@ bool FPHNOVAGatewayContractTest::RunTest(const FString& Parameters)
 
 	FPHGatewayTicket Ticket;
 	const FString PendingJson =
-		TEXT("{\"schema\":1,\"protocol_version\":91,\"build_id\":\"0.1.1907001\",\"ticket_id\":\"ticket-12345678\",\"state\":\"queued\",\"retry_after_ms\":500}");
+		TEXT("{\"schema\":1,\"protocol_version\":91,\"build_id\":\"0.1.1907002\",\"ticket_id\":\"ticket-12345678\",\"state\":\"queued\",\"retry_after_ms\":500}");
 	TestTrue(TEXT("A queued NOVA ticket is accepted"),
 		PHMatchmakingGatewayContract::ParseTicketStatus(
-			PendingJson, TEXT("ticket-12345678"), 91, TEXT("0.1.1907001"), FDateTime::UtcNow(), Ticket, Error));
+			PendingJson, TEXT("ticket-12345678"), 91, TEXT("0.1.1907002"), FDateTime::UtcNow(), Ticket, Error));
 	TestEqual(TEXT("Queued ticket remains pending"), Ticket.Status, EPHGatewayTicketStatus::Pending);
 
 	const FDateTime NowUtc = FDateTime::UtcNow();
 	const FString LobbyJson = FString::Printf(
-		TEXT("{\"schema\":1,\"protocol_version\":91,\"build_id\":\"0.1.1907001\",\"ticket_id\":\"ticket-12345678\",\"state\":\"queued\",")
+		TEXT("{\"schema\":1,\"protocol_version\":91,\"build_id\":\"0.1.1907002\",\"ticket_id\":\"ticket-12345678\",\"state\":\"queued\",")
 		TEXT("\"retry_after_ms\":500,\"lobby\":{\"lobby_id\":\"world-12345678\",\"phase\":\"countdown\",")
 		TEXT("\"assigned_role\":\"prop\",\"survivors_present\":2,\"survivor_slots\":4,")
 		TEXT("\"occupied_survivor_slots\":[1,3],\"assigned_survivor_slot\":3,\"locked\":false,")
@@ -329,7 +329,7 @@ bool FPHNOVAGatewayContractTest::RunTest(const FString& Parameters)
 		*(NowUtc + FTimespan::FromMinutes(1.0)).ToIso8601());
 	TestTrue(TEXT("A P9 staging lobby snapshot is accepted"),
 		PHMatchmakingGatewayContract::ParseTicketStatus(
-			LobbyJson, TEXT("ticket-12345678"), 91, TEXT("0.1.1907001"), NowUtc, Ticket, Error));
+			LobbyJson, TEXT("ticket-12345678"), 91, TEXT("0.1.1907002"), NowUtc, Ticket, Error));
 	TestTrue(TEXT("The client exposes the lobby presentation"), Ticket.bHasLobby);
 	TestEqual(TEXT("Only Survivor occupancy is exposed"), Ticket.SurvivorsPresent, 2);
 	TestEqual(TEXT("The private role remains authoritative"), Ticket.AssignedRole, EPHPlayerRole::Prop);
@@ -338,14 +338,14 @@ bool FPHNOVAGatewayContractTest::RunTest(const FString& Parameters)
 		Ticket.OccupiedSurvivorSlots == TArray<int32>({1, 3}));
 
 	const FString ReadyJson = FString::Printf(
-		TEXT("{\"schema\":1,\"protocol_version\":91,\"build_id\":\"0.1.1907001\",\"ticket_id\":\"ticket-12345678\",\"state\":\"ready\",")
+		TEXT("{\"schema\":1,\"protocol_version\":91,\"build_id\":\"0.1.1907002\",\"ticket_id\":\"ticket-12345678\",\"state\":\"ready\",")
 		TEXT("\"match_id\":\"match-12345678\",\"reservation_id\":\"reservation-12345678\",")
 		TEXT("\"assigned_role\":\"prop\",\"connect_address\":\"steam.76561198000000000:7836\",")
 		TEXT("\"expires_utc\":\"%s\"}"),
 		*(NowUtc + FTimespan::FromMinutes(5.0)).ToIso8601());
 	TestTrue(TEXT("A bound ready reservation is accepted"),
 		PHMatchmakingGatewayContract::ParseTicketStatus(
-			ReadyJson, TEXT("ticket-12345678"), 91, TEXT("0.1.1907001"), NowUtc, Ticket, Error));
+			ReadyJson, TEXT("ticket-12345678"), 91, TEXT("0.1.1907002"), NowUtc, Ticket, Error));
 	TestEqual(TEXT("Backend role is preserved"), Ticket.AssignedRole, EPHPlayerRole::Prop);
 	TestFalse(TEXT("A response from another release cannot enter the P9.1 client"),
 		PHMatchmakingGatewayContract::ParseTicketStatus(
@@ -391,7 +391,7 @@ bool FPHNOVAServerAdmissionContractTest::RunTest(const FString& Parameters)
 
 	const FDateTime NowUtc = FDateTime::UtcNow();
 	const FString RosterJson = FString::Printf(
-		TEXT("{\"schema\":1,\"protocol_version\":91,\"build_id\":\"0.1.1907001\",\"server_instance_id\":\"worker-8\",")
+		TEXT("{\"schema\":1,\"protocol_version\":91,\"build_id\":\"0.1.1907002\",\"server_instance_id\":\"worker-8\",")
 		TEXT("\"run_id\":\"run-8\",\"match_id\":\"match-8\",\"reservation_id\":\"reservation-8\",")
 		TEXT("\"expires_at\":\"%s\",\"expected_players\":3,\"players\":[")
 		TEXT("{\"identity\":\"STEAM:76561198000000001\",\"role\":\"hunter\"},")
@@ -422,13 +422,13 @@ bool FPHNOVAServerAdmissionContractTest::RunTest(const FString& Parameters)
 		PHServerInstanceContract::ParseAdmissionRoster(
 			RosterJson, Identity, NowUtc + FTimespan::FromMinutes(10.0), Roster, Error));
 	const FString WrongBuildRosterJson = RosterJson.Replace(
-		TEXT("\"build_id\":\"0.1.1907001\""),
+		TEXT("\"build_id\":\"0.1.1907002\""),
 		TEXT("\"build_id\":\"0.1.1907000\""));
 	TestFalse(TEXT("A roster built for another release is rejected"),
 		PHServerInstanceContract::ParseAdmissionRoster(
 			WrongBuildRosterJson, Identity, NowUtc, Roster, Error));
 	const FString TwoPlayerRosterJson = FString::Printf(
-		TEXT("{\"schema\":1,\"protocol_version\":91,\"build_id\":\"0.1.1907001\",\"server_instance_id\":\"worker-8\",")
+		TEXT("{\"schema\":1,\"protocol_version\":91,\"build_id\":\"0.1.1907002\",\"server_instance_id\":\"worker-8\",")
 		TEXT("\"run_id\":\"run-8\",\"match_id\":\"match-8\",\"reservation_id\":\"reservation-8\",")
 		TEXT("\"expires_at\":\"%s\",\"expected_players\":2,\"players\":[")
 		TEXT("{\"identity\":\"STEAM:76561198000000001\",\"role\":\"hunter\"},")
@@ -438,7 +438,7 @@ bool FPHNOVAServerAdmissionContractTest::RunTest(const FString& Parameters)
 		PHServerInstanceContract::ParseAdmissionRoster(
 			TwoPlayerRosterJson, Identity, NowUtc, Roster, Error));
 	const FString FourPlayerRosterJson = FString::Printf(
-		TEXT("{\"schema\":1,\"protocol_version\":91,\"build_id\":\"0.1.1907001\",\"server_instance_id\":\"worker-8\",")
+		TEXT("{\"schema\":1,\"protocol_version\":91,\"build_id\":\"0.1.1907002\",\"server_instance_id\":\"worker-8\",")
 		TEXT("\"run_id\":\"run-8\",\"match_id\":\"match-8\",\"reservation_id\":\"reservation-8\",")
 		TEXT("\"expires_at\":\"%s\",\"expected_players\":4,\"players\":[")
 		TEXT("{\"identity\":\"STEAM:76561198000000001\",\"role\":\"hunter\"},")

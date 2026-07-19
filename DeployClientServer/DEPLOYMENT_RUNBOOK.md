@@ -21,7 +21,7 @@ Gateway, NOVA, serveur Linux et client Steam beta sont publiés. Le test humain 
 gate distincte et ne doit pas être déduit du succès de SteamPipe.
 
 Cette table décrit la publication active, pas le checkout actuel. Les sources locales ont changé après ce
-BuildID ; avant tout nouveau build/push Shipping, incrémenter vers `0.1.1907002` ou supérieur. Le nouveau contrat
+BuildID et le candidat local est désormais `0.1.1907002`. Ne jamais reconstruire `0.1.1907001`. Le nouveau contrat
 lobby `display_name/survivor_players` exige un déploiement gateway + serveur/NOVA avant Steam ; l'ancienne gateway
 refuse le nouveau champ strict avec `HTTP 400 invalid_contract`.
 
@@ -44,6 +44,9 @@ L'ordre est imposé :
 Un échec avant Steam arrête le pipeline. Le client n'est donc jamais publié vers un plan de contrôle qui n'est
 pas prêt à accepter exactement sa version.
 
+La gate compile toujours `PropHuntEditor Win64 Development` avant l'automation. Cette étape empêche qu'un
+changement de version ou de test soit contrôlé contre une ancienne DLL Editor encore présente dans `Binaries/`.
+
 Le module VPS coordonné exige le checkout privé `SourceArt` présent localement, car il embarque le paquet gateway
 et ses tests. Il refuse explicitement d'opérer si ce paquet n'est pas disponible.
 
@@ -64,6 +67,24 @@ Pour afficher le plan sans build, SSH, SCP, restart ou upload Steam :
 - `BuildIdOverride` Steam ;
 - `build_id` et nom de release NOVA ;
 - description SteamPipe.
+
+### Frontière publique/locale de `BuildTools`
+
+`BuildTools` est volontairement présent sur GitHub : ses scripts génériques, manifests sans secret, validations,
+fichiers systemd et exemples sont une partie versionnée du pipeline. Ils permettent à un clone neuf d'expliquer,
+contrôler et reproduire la même release. Ne pas retirer ou ignorer le dossier complet.
+
+La frontière privée est limitée à `BuildTools/Steam/steamcmd/` et
+`BuildTools/Steam/steam_build.config.ini`, déjà couverts par `.gitignore`, ainsi qu'aux secrets et caches locaux.
+Le VDF `BuildTools/Steam/app_build_1551300.vdf` et son validateur restent versionnés : ils décrivent le routage du
+package, pas l'authentification Steam. Avant chaque push de documentation ou de pipeline :
+
+```powershell
+git ls-files BuildTools/Steam/steamcmd BuildTools/Steam/steam_build.config.ini
+git check-ignore -v BuildTools/Steam/steam_build.config.ini BuildTools/Steam/steamcmd/steamcmd.exe
+```
+
+La première commande ne doit rien afficher ; la seconde doit montrer les règles de `.gitignore` applicables.
 
 Une itération déjà publiée n'est jamais reconstruite sous le même identifiant. Incrémenter d'abord la version,
 exécuter `-Module Validate`, puis seulement construire.

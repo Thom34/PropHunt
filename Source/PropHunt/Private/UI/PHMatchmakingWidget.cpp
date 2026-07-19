@@ -721,7 +721,7 @@ void UPHMatchmakingWidget::NativeOnInitialized()
 
 	UTextBlock* PatchLabel = WidgetTree->ConstructWidget<UTextBlock>(
 		UTextBlock::StaticClass(), TEXT("ReleaseVersionLabel"));
-	PatchLabel->SetText(FText::FromString(TEXT("0.1.1907001")));
+	PatchLabel->SetText(FText::FromString(TEXT("0.1.1907002")));
 	PatchLabel->SetJustification(ETextJustify::Center);
 	PatchLabel->SetColorAndOpacity(FSlateColor(FLinearColor(0.34f, 0.39f, 0.45f, 0.82f)));
 	PatchLabel->SetFont(FSlateFontInfo(PatchLabel->GetFont().FontObject, 11));

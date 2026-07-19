@@ -1,7 +1,7 @@
 "appbuild"
 {
 	"appid" "1551300"
-	"desc" "PropHunt beta P9.1 build 0.1.1907001 NOVA WaitingRoom invitations 2026-07-19"
+	"desc" "PropHunt beta P9.1 build 0.1.1907002 NOVA WaitingRoom invitations 2026-07-19"
 	"buildoutput" "C:/Users/Thomas/Documents/Unreal Projects/PropHunt/Saved/SteamBuildOutput"
 	"contentroot" "C:/Users/Thomas/Documents/Unreal Projects/PropHunt/package/client/Windows"
 	"setlive" "beta"

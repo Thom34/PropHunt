@@ -4,6 +4,22 @@ Ce document est la procédure opérateur canonique pour construire, déployer et
 Il s'applique au projet `C:\Users\Thomas\Documents\Unreal Projects\PropHunt\PropHunt.uproject` avec le moteur
 `K:\UE58`. Il ne faut jamais remplacer ces chemins par un projet récent d'Unreal ou par un autre checkout.
 
+## Publication technique courante
+
+| Champ | Valeur |
+|---|---|
+| Série | `P9.1` |
+| Version | `0.1.1907001` |
+| Protocole | `91` |
+| Release VPS/NOVA | `build-prophunt-v0.1.1907001` |
+| Steam beta BuildID | `24283752` |
+| Manifest dépôt `1551301` | `3076020675353043028` |
+| Exécutable client SHA-256 | `a6406ad31b3f40cedb3082bc9145b66a4b11a35cd484dcfaa4a5a27982e5b4d5` |
+| IoStore UTOC SHA-256 | `4129390e50c86d099ffd3021b81e046938c36d85d3ee4a4f868e5f3d9014f9c6` |
+
+Gateway, NOVA, serveur Linux et client Steam beta sont publiés. Le test humain final à deux comptes reste une
+gate distincte et ne doit pas être déduit du succès de SteamPipe.
+
 ## Résumé en une commande
 
 Après la préparation locale Steam décrite plus bas :

@@ -1,6 +1,7 @@
 #include "Misc/AutomationTest.h"
 #include "Misc/ConfigCacheIni.h"
 
+#include "Camera/CameraActor.h"
 #include "Characters/PHHunterCharacter.h"
 #include "Characters/PHPropCharacter.h"
 #include "Components/CapsuleComponent.h"
@@ -13,6 +14,7 @@
 #include "Engine/World.h"
 #include "Game/PHMatchRulesDataAsset.h"
 #include "Game/PHMatchTypes.h"
+#include "Game/PHPlayerState.h"
 #include "Gameplay/Transformation/PHPropFormDataAsset.h"
 #include "Gameplay/Transformation/PHPropTransformTarget.h"
 #include "Gameplay/Capture/PHCaptureTypes.h"
@@ -27,9 +29,13 @@
 #include "PhysicsEngine/BodySetup.h"
 #include "GameFramework/SpringArmComponent.h"
 #include "GameFramework/InputSettings.h"
+#include "GameFramework/GameModeBase.h"
 #include "GameFramework/PlayerStart.h"
+#include "GameFramework/WorldSettings.h"
 #include "InputCoreTypes.h"
 #include "Materials/Material.h"
+#include "Online/PHMatchmakingGatewayContract.h"
+#include "Online/PHServerInstanceContract.h"
 #include "Online/PHSessionSubsystem.h"
 #include "UI/PHInGameMenuWidget.h"
 #include "UI/PHMatchmakingWidget.h"
@@ -89,9 +95,9 @@ bool FPHSteamLobbyPriorityTest::RunTest(const FString& Parameters)
 	TestEqual(TEXT("A newer lobby remains behind older available lobbies"), Priorities[2].SessionId, FString(TEXT("newer-low-ping")));
 	TestEqual(TEXT("A lobby without a creation timestamp is a last-resort fallback"), Priorities[3].SessionId, FString(TEXT("legacy-without-time")));
 
-	TestEqual(TEXT("Hunter creates the first lobby when the cap is not reached"),
+	TestEqual(TEXT("Dedicated-only Hunter waits for NOVA instead of creating a listen lobby"),
 		PHMatchmakingPolicy::DecideAfterSearch(EPHMatchmakingPreference::Hunter, 1, 1, 2),
-		EPHMatchmakingSearchDecision::CreateHunterLobby);
+		EPHMatchmakingSearchDecision::WaitForAvailableSlot);
 	TestEqual(TEXT("Hunter waits instead of being forced to Prop when two lobbies already exist"),
 		PHMatchmakingPolicy::DecideAfterSearch(EPHMatchmakingPreference::Hunter, 2, 1, 2),
 		EPHMatchmakingSearchDecision::WaitForAvailableSlot);
@@ -104,9 +110,9 @@ bool FPHSteamLobbyPriorityTest::RunTest(const FString& Parameters)
 	TestEqual(TEXT("Random prefers filling an existing lobby as Prop"),
 		PHMatchmakingPolicy::DecideAfterSearch(EPHMatchmakingPreference::Random, 1, 1, 2),
 		EPHMatchmakingSearchDecision::JoinPropLobby);
-	TestEqual(TEXT("Random creates a Hunter lobby when none exists"),
+	TestEqual(TEXT("Random never creates a listen lobby when no dedicated worker exists"),
 		PHMatchmakingPolicy::DecideAfterSearch(EPHMatchmakingPreference::Random, 0, 0, 2),
-		EPHMatchmakingSearchDecision::CreateHunterLobby);
+		EPHMatchmakingSearchDecision::WaitForAvailableSlot);
 
 	TestEqual(TEXT("The listen-server local controller is the Hunter"),
 		PHMatchmakingPolicy::ResolveListenServerRole(true, false),
@@ -117,12 +123,24 @@ bool FPHSteamLobbyPriorityTest::RunTest(const FString& Parameters)
 	TestEqual(TEXT("A second local controller cannot become another Hunter"),
 		PHMatchmakingPolicy::ResolveListenServerRole(true, true),
 		EPHPlayerRole::Prop);
-	TestEqual(TEXT("First remote client on a dedicated server becomes the Hunter"),
+	TestEqual(TEXT("A dedicated client stays unassigned until the roster is locked"),
 		PHMatchmakingPolicy::ResolveAuthoritativeServerRole(false, true, false),
-		EPHPlayerRole::Hunter);
-	TestEqual(TEXT("Following remote clients on a dedicated server become Props"),
+		EPHPlayerRole::Unassigned);
+	TestEqual(TEXT("Dedicated role assignment never depends on connection order"),
 		PHMatchmakingPolicy::ResolveAuthoritativeServerRole(false, true, true),
-		EPHPlayerRole::Prop);
+		EPHPlayerRole::Unassigned);
+
+	TSet<int32> SelectedHunterIndexes;
+	for (int32 Seed = 1; Seed <= 256; ++Seed)
+	{
+		const int32 HunterIndex = PHMatchmakingPolicy::ChooseRandomHunterIndex(3, Seed);
+		TestTrue(TEXT("A server-selected Hunter index stays inside the roster"), HunterIndex >= 0 && HunterIndex < 3);
+		SelectedHunterIndexes.Add(HunterIndex);
+	}
+	TestEqual(TEXT("Server-side random selection can choose every member of a three-player roster"),
+		SelectedHunterIndexes.Num(), 3);
+	TestEqual(TEXT("An empty roster has no Hunter candidate"),
+		PHMatchmakingPolicy::ChooseRandomHunterIndex(0, 1234), INDEX_NONE);
 
 	const FPHSessionHostingPolicy ListenPolicy = PHMatchmakingPolicy::ResolveSessionHostingPolicy(false);
 	TestFalse(TEXT("Listen hosting is not marked dedicated"), ListenPolicy.bIsDedicated);
@@ -139,6 +157,64 @@ bool FPHSteamLobbyPriorityTest::RunTest(const FString& Parameters)
 		PHMatchmakingPolicy::IsJoinedClientConnection(false, false, false));
 	TestFalse(TEXT("A client world without a server connection is not connected"),
 		PHMatchmakingPolicy::IsJoinedClientConnection(true, false, false));
+
+	TestTrue(TEXT("An enabled Steam session interface can publish a dedicated server"),
+		PHMatchmakingPolicy::IsDedicatedSteamBackendAvailable(TEXT("STEAM"), true, true));
+	TestFalse(TEXT("The NULL fallback cannot claim dedicated Steam publication"),
+		PHMatchmakingPolicy::IsDedicatedSteamBackendAvailable(TEXT("NULL"), true, true));
+	TestFalse(TEXT("A disabled Steam backend cannot claim dedicated publication"),
+		PHMatchmakingPolicy::IsDedicatedSteamBackendAvailable(TEXT("STEAM"), false, true));
+	TestFalse(TEXT("Steam without a session interface cannot claim dedicated publication"),
+		PHMatchmakingPolicy::IsDedicatedSteamBackendAvailable(TEXT("STEAM"), true, false));
+
+	TestTrue(TEXT("Two ready players can explicitly launch the dedicated 1v1 test"),
+		PHMatchmakingPolicy::ShouldLaunchReadyTwoPlayerTest(2, 2, 1, true, true));
+	TestFalse(TEXT("One ready player cannot launch the dedicated 1v1 test"),
+		PHMatchmakingPolicy::ShouldLaunchReadyTwoPlayerTest(2, 1, 1, true, true));
+	TestFalse(TEXT("A third connected player keeps the normal joinable countdown"),
+		PHMatchmakingPolicy::ShouldLaunchReadyTwoPlayerTest(3, 3, 1, true, true));
+	TestFalse(TEXT("The ready shortcut cannot bypass a public two-survivor minimum"),
+		PHMatchmakingPolicy::ShouldLaunchReadyTwoPlayerTest(2, 2, 2, true, true));
+	TestFalse(TEXT("The ready shortcut cannot run outside a dedicated Lobby"),
+		PHMatchmakingPolicy::ShouldLaunchReadyTwoPlayerTest(2, 2, 1, false, true)
+			|| PHMatchmakingPolicy::ShouldLaunchReadyTwoPlayerTest(2, 2, 1, true, false));
+	TestTrue(TEXT("A waiting-room roster rejects late admission after launch is locked"),
+		PHMatchmakingPolicy::IsRosterAdmissionLocked(true, true, false));
+	TestTrue(TEXT("A gameplay world rejects admission while its seamless roster is arriving"),
+		PHMatchmakingPolicy::IsRosterAdmissionLocked(false, false, true));
+	TestFalse(TEXT("An unlocked waiting room remains joinable"),
+		PHMatchmakingPolicy::IsRosterAdmissionLocked(true, false, false));
+
+	TestTrue(TEXT("The non-Shipping smoke-only direct-connect validator accepts an explicit IPv4 and port"),
+		PHMatchmakingPolicy::IsValidDirectConnectEndpoint(TEXT("127.0.0.1:7846")));
+	TestTrue(TEXT("A public VPS IPv4 and valid high port are accepted"),
+		PHMatchmakingPolicy::IsValidDirectConnectEndpoint(TEXT("37.59.57.1:65535")));
+	TestFalse(TEXT("A direct-connect endpoint cannot inject URL options"),
+		PHMatchmakingPolicy::IsValidDirectConnectEndpoint(TEXT("127.0.0.1:7846?game=/Script/Other")));
+	TestFalse(TEXT("A direct-connect endpoint rejects hostnames and missing ports"),
+		PHMatchmakingPolicy::IsValidDirectConnectEndpoint(TEXT("localhost:7846"))
+			|| PHMatchmakingPolicy::IsValidDirectConnectEndpoint(TEXT("127.0.0.1")));
+	TestFalse(TEXT("A direct-connect endpoint rejects invalid address and port ranges"),
+		PHMatchmakingPolicy::IsValidDirectConnectEndpoint(TEXT("256.0.0.1:7846"))
+			|| PHMatchmakingPolicy::IsValidDirectConnectEndpoint(TEXT("0.0.0.0:7846"))
+			|| PHMatchmakingPolicy::IsValidDirectConnectEndpoint(TEXT("255.255.255.255:7846"))
+			|| PHMatchmakingPolicy::IsValidDirectConnectEndpoint(TEXT("127.0.0.1:0"))
+			|| PHMatchmakingPolicy::IsValidDirectConnectEndpoint(TEXT("127.0.0.1:65536")));
+
+	APHPlayerState* TravelSourceState = NewObject<APHPlayerState>();
+	APHPlayerState* TravelDestinationState = NewObject<APHPlayerState>();
+	TestNotNull(TEXT("Seamless travel source PlayerState exists"), TravelSourceState);
+	TestNotNull(TEXT("Seamless travel destination PlayerState exists"), TravelDestinationState);
+	if (TravelSourceState != nullptr && TravelDestinationState != nullptr)
+	{
+		TravelSourceState->SetPlayerRole(EPHPlayerRole::Hunter);
+		TravelSourceState->SetLobbyReady(true);
+		TravelSourceState->CopyProperties(TravelDestinationState);
+		TestEqual(TEXT("Seamless travel preserves the server-selected role"),
+			TravelDestinationState->GetPlayerRole(), EPHPlayerRole::Hunter);
+		TestFalse(TEXT("Seamless travel clears the transient lobby-ready flag"),
+			TravelDestinationState->IsLobbyReady());
+	}
 	return true;
 }
 
@@ -156,7 +232,9 @@ bool FPHSteamMatchmakingDefaultsTest::RunTest(const FString& Parameters)
 	if (SessionDefaults != nullptr)
 	{
 		TestEqual(TEXT("Steam network protocol isolates incompatible beta builds"),
-			SessionDefaults->GetProtocolVersion(), 6);
+			SessionDefaults->GetProtocolVersion(), 91);
+		TestEqual(TEXT("Client and dedicated server share the exact release identifier"),
+			SessionDefaults->GetReleaseVersion(), FString(TEXT("0.1.1907001")));
 		TestTrue(TEXT("Dedicated servers publish their session automatically"),
 			SessionDefaults->GetAutoCreateDedicatedSession());
 		TestTrue(TEXT("Steam client travel confirmation has a non-zero grace period"),
@@ -170,7 +248,193 @@ bool FPHSteamMatchmakingDefaultsTest::RunTest(const FString& Parameters)
 		{
 			return Definition.Contains(TEXT("/Script/SteamSockets.SteamSocketsNetDriver"));
 		}));
+	TestFalse(TEXT("P9 has no IpNetDriver fallback in the packaged GameNetDriver"),
+		NetDriverDefinitions.ContainsByPredicate([](const FString& Definition)
+		{
+			return Definition.Contains(TEXT("/Script/OnlineSubsystemUtils.IpNetDriver"));
+		}));
 	return SessionDefaults != nullptr && MatchmakingWidgetDefaults != nullptr;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+	FPHNOVAGatewayContractTest,
+	"PropHunt.NOVA.Matchmaking.GatewayContract",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FPHNOVAGatewayContractTest::RunTest(const FString& Parameters)
+{
+	TestEqual(TEXT("Hunter preference is explicit"),
+		FString(PHMatchmakingGatewayContract::RolePreferenceToString(EPHMatchmakingPreference::Hunter)),
+		FString(TEXT("hunter")));
+	TestEqual(TEXT("Survivor preference is explicit"),
+		FString(PHMatchmakingGatewayContract::RolePreferenceToString(EPHMatchmakingPreference::Prop)),
+		FString(TEXT("prop")));
+	TestEqual(TEXT("Random preference remains one ticket"),
+		FString(PHMatchmakingGatewayContract::RolePreferenceToString(EPHMatchmakingPreference::Random)),
+		FString(TEXT("random")));
+
+	FString Normalized;
+	FString Error;
+	TestTrue(TEXT("Shipping accepts the pinned HTTPS gateway"),
+		PHMatchmakingGatewayContract::NormalizeGatewayBaseUrl(
+			TEXT("https://gateway.meteothom.com/"), true, Normalized, Error));
+	TestEqual(TEXT("Gateway origin is normalized"), Normalized,
+		FString(TEXT("https://gateway.meteothom.com")));
+	TestFalse(TEXT("Shipping rejects clear-text public gateways"),
+		PHMatchmakingGatewayContract::NormalizeGatewayBaseUrl(
+			TEXT("http://gateway.meteothom.com"), true, Normalized, Error));
+	TestTrue(TEXT("Development accepts a loopback gateway mock"),
+		PHMatchmakingGatewayContract::NormalizeGatewayBaseUrl(
+			TEXT("http://127.0.0.1:8789"), false, Normalized, Error));
+	TestTrue(TEXT("SteamSockets destination is accepted"),
+		PHMatchmakingGatewayContract::NormalizeConnectAddress(
+			TEXT("steam.76561198000000000:7836"), Normalized, Error));
+	TestFalse(TEXT("A direct IP destination cannot bypass SteamSockets"),
+		PHMatchmakingGatewayContract::NormalizeConnectAddress(
+			TEXT("127.0.0.1:7836"), Normalized, Error));
+	TestFalse(TEXT("A gateway destination can never inject listen-server options"),
+		PHMatchmakingGatewayContract::NormalizeConnectAddress(
+			TEXT("127.0.0.1:7836?listen"), Normalized, Error));
+
+	FPHGatewayTicket Ticket;
+	const FString PendingJson =
+		TEXT("{\"schema\":1,\"protocol_version\":91,\"build_id\":\"0.1.1907001\",\"ticket_id\":\"ticket-12345678\",\"state\":\"queued\",\"retry_after_ms\":500}");
+	TestTrue(TEXT("A queued NOVA ticket is accepted"),
+		PHMatchmakingGatewayContract::ParseTicketStatus(
+			PendingJson, TEXT("ticket-12345678"), 91, TEXT("0.1.1907001"), FDateTime::UtcNow(), Ticket, Error));
+	TestEqual(TEXT("Queued ticket remains pending"), Ticket.Status, EPHGatewayTicketStatus::Pending);
+
+	const FDateTime NowUtc = FDateTime::UtcNow();
+	const FString LobbyJson = FString::Printf(
+		TEXT("{\"schema\":1,\"protocol_version\":91,\"build_id\":\"0.1.1907001\",\"ticket_id\":\"ticket-12345678\",\"state\":\"queued\",")
+		TEXT("\"retry_after_ms\":500,\"lobby\":{\"lobby_id\":\"world-12345678\",\"phase\":\"countdown\",")
+		TEXT("\"assigned_role\":\"prop\",\"survivors_present\":2,\"survivor_slots\":4,")
+		TEXT("\"occupied_survivor_slots\":[1,3],\"assigned_survivor_slot\":3,\"locked\":false,")
+		TEXT("\"countdown_ends_utc\":\"%s\"}}"),
+		*(NowUtc + FTimespan::FromMinutes(1.0)).ToIso8601());
+	TestTrue(TEXT("A P9 staging lobby snapshot is accepted"),
+		PHMatchmakingGatewayContract::ParseTicketStatus(
+			LobbyJson, TEXT("ticket-12345678"), 91, TEXT("0.1.1907001"), NowUtc, Ticket, Error));
+	TestTrue(TEXT("The client exposes the lobby presentation"), Ticket.bHasLobby);
+	TestEqual(TEXT("Only Survivor occupancy is exposed"), Ticket.SurvivorsPresent, 2);
+	TestEqual(TEXT("The private role remains authoritative"), Ticket.AssignedRole, EPHPlayerRole::Prop);
+	TestEqual(TEXT("The gateway assigns this Survivor podium"), Ticket.AssignedSurvivorSlot, 3);
+	TestTrue(TEXT("A vacated podium remains visibly empty"),
+		Ticket.OccupiedSurvivorSlots == TArray<int32>({1, 3}));
+
+	const FString ReadyJson = FString::Printf(
+		TEXT("{\"schema\":1,\"protocol_version\":91,\"build_id\":\"0.1.1907001\",\"ticket_id\":\"ticket-12345678\",\"state\":\"ready\",")
+		TEXT("\"match_id\":\"match-12345678\",\"reservation_id\":\"reservation-12345678\",")
+		TEXT("\"assigned_role\":\"prop\",\"connect_address\":\"steam.76561198000000000:7836\",")
+		TEXT("\"expires_utc\":\"%s\"}"),
+		*(NowUtc + FTimespan::FromMinutes(5.0)).ToIso8601());
+	TestTrue(TEXT("A bound ready reservation is accepted"),
+		PHMatchmakingGatewayContract::ParseTicketStatus(
+			ReadyJson, TEXT("ticket-12345678"), 91, TEXT("0.1.1907001"), NowUtc, Ticket, Error));
+	TestEqual(TEXT("Backend role is preserved"), Ticket.AssignedRole, EPHPlayerRole::Prop);
+	TestFalse(TEXT("A response from another release cannot enter the P9.1 client"),
+		PHMatchmakingGatewayContract::ParseTicketStatus(
+			PendingJson, TEXT("ticket-12345678"), 91, TEXT("0.1.1907000"), NowUtc, Ticket, Error));
+
+	FString GatewayUrl;
+	FString TicketPath;
+	GConfig->GetString(TEXT("/Script/PropHunt.PHMatchmakingGatewaySubsystem"),
+		TEXT("GatewayBaseUrl"), GatewayUrl, GGameIni);
+	GConfig->GetString(TEXT("/Script/PropHunt.PHMatchmakingGatewaySubsystem"),
+		TEXT("TicketPath"), TicketPath, GGameIni);
+	TestEqual(TEXT("Client uses the public gateway origin"), GatewayUrl,
+		FString(TEXT("https://gateway.meteothom.com")));
+	TestEqual(TEXT("Client uses the PropHunt ticket route"), TicketPath,
+		FString(TEXT("/v1/prophunt/tickets")));
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+	FPHNOVAServerAdmissionContractTest,
+	"PropHunt.NOVA.Matchmaking.ServerAdmissionContract",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FPHNOVAServerAdmissionContractTest::RunTest(const FString& Parameters)
+{
+	const FPHServerRuntimeIdentity Identity = PHServerInstanceContract::ResolveCommandLine(
+		TEXT("-RequireNOVAReservation -ServerInstanceId=worker-8 -RunId=run-8 -MatchId=match-8"),
+		true,
+		TEXT("unused"));
+	TestTrue(TEXT("A dedicated worker accepts complete immutable NOVA identity"), Identity.IsValid());
+	TestTrue(TEXT("NOVA admission is explicitly required"), Identity.bRequireNOVAReservation);
+	TestTrue(TEXT("A dedicated Shipping worker must fail closed without a NOVA reservation"),
+		PHServerInstanceContract::ShouldRequireNOVAReservation(true, true));
+	TestFalse(TEXT("A Development worker may still run bounded local diagnostics without NOVA"),
+		PHServerInstanceContract::ShouldRequireNOVAReservation(true, false));
+	TestFalse(TEXT("A Shipping client is not treated as a worker"),
+		PHServerInstanceContract::ShouldRequireNOVAReservation(false, true));
+	const FPHServerRuntimeIdentity MissingMatch = PHServerInstanceContract::ResolveCommandLine(
+		TEXT("-RequireNOVAReservation -ServerInstanceId=worker-8 -RunId=run-8"),
+		true,
+		TEXT("fallback"));
+	TestFalse(TEXT("A NOVA worker rejects generated match identity"), MissingMatch.IsValid());
+
+	const FDateTime NowUtc = FDateTime::UtcNow();
+	const FString RosterJson = FString::Printf(
+		TEXT("{\"schema\":1,\"protocol_version\":91,\"build_id\":\"0.1.1907001\",\"server_instance_id\":\"worker-8\",")
+		TEXT("\"run_id\":\"run-8\",\"match_id\":\"match-8\",\"reservation_id\":\"reservation-8\",")
+		TEXT("\"expires_at\":\"%s\",\"expected_players\":3,\"players\":[")
+		TEXT("{\"identity\":\"STEAM:76561198000000001\",\"role\":\"hunter\"},")
+		TEXT("{\"identity\":\"STEAM:76561198000000002\",\"role\":\"prop\"},")
+		TEXT("{\"identity\":\"STEAM:76561198000000003\",\"role\":\"prop\"}]}"),
+		*(NowUtc + FTimespan::FromMinutes(5.0)).ToIso8601());
+	FPHAdmissionRosterSnapshot Roster;
+	FString Error;
+	TestTrue(TEXT("A P9 roster bound to the worker is accepted"),
+		PHServerInstanceContract::ParseAdmissionRoster(
+			RosterJson, Identity, NowUtc, Roster, Error));
+	TestEqual(TEXT("Roster count is authoritative"), Roster.ExpectedPlayers, 3);
+	EPHPlayerRole Role = EPHPlayerRole::Unassigned;
+	TestTrue(TEXT("Reserved Steam identity is admitted"),
+		PHServerInstanceContract::ResolveAuthorizedRole(
+			Roster, TEXT("steam:76561198000000001"), Role, Error));
+	TestEqual(TEXT("Reserved Hunter role is preserved"), Role, EPHPlayerRole::Hunter);
+	TestFalse(TEXT("An unreserved Steam identity is rejected"),
+		PHServerInstanceContract::ResolveAuthorizedRole(
+			Roster, TEXT("STEAM:76561198000009999"), Role, Error));
+
+	FPHServerRuntimeIdentity WrongRun = Identity;
+	WrongRun.RunId = TEXT("run-other");
+	TestFalse(TEXT("A roster cannot be replayed on another run"),
+		PHServerInstanceContract::ParseAdmissionRoster(
+			RosterJson, WrongRun, NowUtc, Roster, Error));
+	TestFalse(TEXT("An expired roster is rejected"),
+		PHServerInstanceContract::ParseAdmissionRoster(
+			RosterJson, Identity, NowUtc + FTimespan::FromMinutes(10.0), Roster, Error));
+	const FString WrongBuildRosterJson = RosterJson.Replace(
+		TEXT("\"build_id\":\"0.1.1907001\""),
+		TEXT("\"build_id\":\"0.1.1907000\""));
+	TestFalse(TEXT("A roster built for another release is rejected"),
+		PHServerInstanceContract::ParseAdmissionRoster(
+			WrongBuildRosterJson, Identity, NowUtc, Roster, Error));
+	const FString TwoPlayerRosterJson = FString::Printf(
+		TEXT("{\"schema\":1,\"protocol_version\":91,\"build_id\":\"0.1.1907001\",\"server_instance_id\":\"worker-8\",")
+		TEXT("\"run_id\":\"run-8\",\"match_id\":\"match-8\",\"reservation_id\":\"reservation-8\",")
+		TEXT("\"expires_at\":\"%s\",\"expected_players\":2,\"players\":[")
+		TEXT("{\"identity\":\"STEAM:76561198000000001\",\"role\":\"hunter\"},")
+		TEXT("{\"identity\":\"STEAM:76561198000000002\",\"role\":\"prop\"}]}"),
+		*(NowUtc + FTimespan::FromMinutes(5.0)).ToIso8601());
+	TestTrue(TEXT("A private P9 reservation can explicitly request the dedicated 1v1 mode"),
+		PHServerInstanceContract::ParseAdmissionRoster(
+			TwoPlayerRosterJson, Identity, NowUtc, Roster, Error));
+	const FString FourPlayerRosterJson = FString::Printf(
+		TEXT("{\"schema\":1,\"protocol_version\":91,\"build_id\":\"0.1.1907001\",\"server_instance_id\":\"worker-8\",")
+		TEXT("\"run_id\":\"run-8\",\"match_id\":\"match-8\",\"reservation_id\":\"reservation-8\",")
+		TEXT("\"expires_at\":\"%s\",\"expected_players\":4,\"players\":[")
+		TEXT("{\"identity\":\"STEAM:76561198000000001\",\"role\":\"hunter\"},")
+		TEXT("{\"identity\":\"STEAM:76561198000000002\",\"role\":\"prop\"},")
+		TEXT("{\"identity\":\"STEAM:76561198000000003\",\"role\":\"prop\"},")
+		TEXT("{\"identity\":\"STEAM:76561198000000004\",\"role\":\"prop\"}]}"),
+		*(NowUtc + FTimespan::FromMinutes(5.0)).ToIso8601());
+	TestTrue(TEXT("A P9 reservation can scale to one Hunter and three Props"),
+		PHServerInstanceContract::ParseAdmissionRoster(
+			FourPlayerRosterJson, Identity, NowUtc, Roster, Error));
+	return true;
 }
 
 IMPLEMENT_SIMPLE_AUTOMATION_TEST(
@@ -1043,7 +1307,8 @@ bool FPHDefaultMatchRulesTest::RunTest(const FString& Parameters)
 	TestEqual(TEXT("Reference required objective count"), Rules->RequiredObjectiveCount, 4);
 	TestEqual(TEXT("MVP supports at most four Props"), Rules->MaximumPropPlayers, 4);
 	TestEqual(TEXT("Lobby remains joinable for one minute after the first Prop arrives"), Rules->LobbyWaitDuration, 60.0f);
-	TestEqual(TEXT("A complete reserved roster only waits for the visible ready countdown"), Rules->LobbyReadyCountdownDuration, 5.0f);
+	TestEqual(TEXT("A complete roster remains joinable for at least fifteen seconds"), Rules->LobbyReadyCountdownDuration, 15.0f);
+	TestEqual(TEXT("An incomplete seamless roster recovers after thirty seconds"), Rules->RosterTravelTimeoutDuration, 30.0f);
 	TestEqual(TEXT("Reference Hunt lasts fifteen minutes"), Rules->HuntDuration, 900.0f);
 	TestEqual(TEXT("Escape phase allows three minutes to open and reach a gate"), Rules->EscapeDuration, 180.0f);
 	TestEqual(TEXT("All remaining Props retained die within five seconds"),
@@ -1104,7 +1369,8 @@ bool FPHMatchRulesAssetTest::RunTest(const FString& Parameters)
 	TestEqual(TEXT("Configured minimum Prop count"), Rules->MinimumPropPlayers, 1);
 	TestEqual(TEXT("Configured maximum Prop count"), Rules->MaximumPropPlayers, 4);
 	TestEqual(TEXT("Configured lobby join window"), Rules->LobbyWaitDuration, 60.0f);
-	TestEqual(TEXT("Configured complete-roster countdown"), Rules->LobbyReadyCountdownDuration, 5.0f);
+	TestEqual(TEXT("Configured complete-roster countdown"), Rules->LobbyReadyCountdownDuration, 15.0f);
+	TestEqual(TEXT("Configured seamless roster timeout"), Rules->RosterTravelTimeoutDuration, 30.0f);
 	TestEqual(TEXT("Configured preparation duration"), Rules->PreparationDuration, 10.0f);
 	TestEqual(TEXT("Configured hunt duration"), Rules->HuntDuration, 900.0f);
 	TestEqual(TEXT("Configured escape duration"), Rules->EscapeDuration, 180.0f);
@@ -1214,11 +1480,69 @@ bool FPHPostMatchMapsTest::RunTest(const FString& Parameters)
 {
 	const FSoftObjectPath ResultsMapPath(TEXT("/Game/PropHunt/Maps/L_PH_Results.L_PH_Results"));
 	const FSoftObjectPath LobbyMapPath(TEXT("/Game/PropHunt/Maps/L_PH_Lobby.L_PH_Lobby"));
+	const FSoftObjectPath IntroMapPath(TEXT("/Game/PropHunt/Tests/L_PH_Intro.L_PH_Intro"));
+	const FSoftObjectPath WaitingRoomMapPath(TEXT("/Game/PropHunt/Maps/L_PH_WaitingRoom.L_PH_WaitingRoom"));
 	TestNotNull(TEXT("Dedicated post-match results map exists"), ResultsMapPath.TryLoad());
 	TestNotNull(TEXT("Separate matchmaking lobby map exists"), LobbyMapPath.TryLoad());
+	UWorld* IntroWorld = Cast<UWorld>(IntroMapPath.TryLoad());
+	TestNotNull(TEXT("Current P9 social lobby map exists"), IntroWorld);
+	if (IntroWorld != nullptr && IntroWorld->PersistentLevel != nullptr)
+	{
+		const AWorldSettings* IntroSettings = IntroWorld->GetWorldSettings();
+		TestNotNull(TEXT("P9 lobby has WorldSettings"), IntroSettings);
+		if (IntroSettings != nullptr)
+		{
+			TestTrue(TEXT("P9 lobby uses the no-Pawn frontend GameMode"),
+				IntroSettings->DefaultGameMode != nullptr
+					&& IntroSettings->DefaultGameMode->GetName().Contains(TEXT("PHFrontendGameMode")));
+		}
+		int32 CameraCount = 0;
+		int32 SurvivorPreviewMarkers = 0;
+		int32 HunterPreviewMarkers = 0;
+		int32 StageActors = 0;
+		for (const AActor* Actor : IntroWorld->PersistentLevel->Actors)
+		{
+			if (!IsValid(Actor))
+			{
+				continue;
+			}
+			CameraCount += Cast<ACameraActor>(Actor) != nullptr ? 1 : 0;
+			SurvivorPreviewMarkers += Actor->ActorHasTag(TEXT("PHLobbySurvivorPreview")) ? 1 : 0;
+			HunterPreviewMarkers += Actor->ActorHasTag(TEXT("PHLobbyHunterPreview")) ? 1 : 0;
+			StageActors += Actor->ActorHasTag(TEXT("PHLobbyStage")) ? 1 : 0;
+		}
+		TestTrue(TEXT("P9 lobby has a fixed authored camera"), CameraCount > 0);
+		TestEqual(TEXT("P9 lobby exposes four authored Survivor preview slots"), SurvivorPreviewMarkers, 4);
+		TestEqual(TEXT("P9 lobby exposes one private Hunter preview slot"), HunterPreviewMarkers, 1);
+		TestTrue(TEXT("P9 lobby contains visible authored stage geometry"), StageActors >= 7);
+	}
+	UWorld* WaitingRoomWorld = Cast<UWorld>(WaitingRoomMapPath.TryLoad());
+	TestNotNull(TEXT("Separate dedicated waiting room map exists"), WaitingRoomWorld);
+	if (WaitingRoomWorld != nullptr)
+	{
+		const AWorldSettings* WaitingRoomSettings = WaitingRoomWorld->GetWorldSettings();
+		TestNotNull(TEXT("Waiting room has WorldSettings"), WaitingRoomSettings);
+		if (WaitingRoomSettings != nullptr)
+		{
+			TestTrue(TEXT("Waiting room uses the match GameMode"),
+				WaitingRoomSettings->DefaultGameMode != nullptr
+					&& WaitingRoomSettings->DefaultGameMode->GetName().Contains(TEXT("BP_PH_GameMode")));
+		}
+		int32 WaitingRoomCameraCount = 0;
+		if (WaitingRoomWorld->PersistentLevel != nullptr)
+		{
+			for (const AActor* Actor : WaitingRoomWorld->PersistentLevel->Actors)
+			{
+				WaitingRoomCameraCount += Cast<ACameraActor>(Actor) != nullptr ? 1 : 0;
+			}
+		}
+		TestTrue(TEXT("Waiting room provides a fixed camera for no-Pawn clients"), WaitingRoomCameraCount > 0);
+	}
 
 	FString ConfiguredResultsMap;
 	FString ConfiguredLobbyMap;
+	FString ConfiguredServerDefaultMap;
+	FString ConfiguredMatchMap;
 	GConfig->GetString(
 		TEXT("/Script/PropHunt.PHSessionSubsystem"),
 		TEXT("ResultsMap"),
@@ -1229,12 +1553,28 @@ bool FPHPostMatchMapsTest::RunTest(const FString& Parameters)
 		TEXT("ReturnMap"),
 		ConfiguredLobbyMap,
 		GGameIni);
+	GConfig->GetString(
+		TEXT("/Script/EngineSettings.GameMapsSettings"),
+		TEXT("ServerDefaultMap"),
+		ConfiguredServerDefaultMap,
+		GEngineIni);
+	GConfig->GetString(
+		TEXT("/Script/PropHunt.PHSessionSubsystem"),
+		TEXT("MatchMap"),
+		ConfiguredMatchMap,
+		GGameIni);
 	TestEqual(TEXT("Normal match completion targets the results map"),
 		ConfiguredResultsMap, FString(TEXT("/Game/PropHunt/Maps/L_PH_Results")));
-	TestEqual(TEXT("Continue from results targets the matchmaking lobby"),
-		ConfiguredLobbyMap, FString(TEXT("/Game/PropHunt/Maps/L_PH_Lobby")));
+	TestEqual(TEXT("Continue from results restores the fresh matchmaking menu"),
+		ConfiguredLobbyMap, FString(TEXT("/Game/PropHunt/Tests/L_PH_Intro")));
 	TestNotEqual(TEXT("Results and matchmaking never share the same map"),
 		ConfiguredResultsMap, ConfiguredLobbyMap);
+	TestEqual(TEXT("A dedicated server starts in the separate waiting room scene"),
+		ConfiguredServerDefaultMap, FString(TEXT("/Game/PropHunt/Maps/L_PH_WaitingRoom")));
+	TestFalse(TEXT("ServerDefaultMap is a cookable package path without URL options"),
+		ConfiguredServerDefaultMap.Contains(TEXT("?")));
+	TestNotEqual(TEXT("The dedicated waiting room is not the gameplay map"),
+		ConfiguredServerDefaultMap, ConfiguredMatchMap);
 	return true;
 }
 

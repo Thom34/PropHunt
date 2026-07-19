@@ -1,5 +1,7 @@
 #include "Online/PHSessionSubsystem.h"
 
+#include "Online/PHMatchmakingGatewaySubsystem.h"
+
 #include "Engine/Engine.h"
 #include "Engine/LocalPlayer.h"
 #include "Engine/NetConnection.h"
@@ -7,8 +9,11 @@
 #include "Engine/World.h"
 #include "GameFramework/PlayerController.h"
 #include "Kismet/GameplayStatics.h"
+#include "Misc/CommandLine.h"
 #include "Misc/DateTime.h"
 #include "Misc/PackageName.h"
+#include "Misc/Parse.h"
+#include "Interfaces/OnlineExternalUIInterface.h"
 #include "Online/OnlineSessionNames.h"
 #include "OnlineSubsystem.h"
 #include "OnlineSubsystemUtils.h"
@@ -101,7 +106,8 @@ EPHMatchmakingSearchDecision PHMatchmakingPolicy::DecideAfterSearch(
 	const int32 VisibleHunterLobbyCount,
 	const int32 AvailableHunterLobbyCount,
 	const int32 MaximumHunterLobbyCount,
-	const int32 AvailableUnassignedHunterLobbyCount)
+	const int32 AvailableUnassignedHunterLobbyCount,
+	const bool bAllowListenServerCreation)
 {
 	const bool bHasAvailableLobby = AvailableHunterLobbyCount > 0;
 	const bool bHunterLobbyCapReached = VisibleHunterLobbyCount >= FMath::Max(1, MaximumHunterLobbyCount);
@@ -113,7 +119,7 @@ EPHMatchmakingSearchDecision PHMatchmakingPolicy::DecideAfterSearch(
 		{
 			return EPHMatchmakingSearchDecision::JoinHunterLobby;
 		}
-		if (!bHunterLobbyCapReached)
+		if (bAllowListenServerCreation && !bHunterLobbyCapReached)
 		{
 			return EPHMatchmakingSearchDecision::CreateHunterLobby;
 		}
@@ -123,7 +129,7 @@ EPHMatchmakingSearchDecision PHMatchmakingPolicy::DecideAfterSearch(
 		{
 			return EPHMatchmakingSearchDecision::JoinPropLobby;
 		}
-		return !bHunterLobbyCapReached
+		return bAllowListenServerCreation && !bHunterLobbyCapReached
 			? EPHMatchmakingSearchDecision::CreateHunterLobby
 			: EPHMatchmakingSearchDecision::WaitForAvailableSlot;
 	case EPHMatchmakingPreference::Prop:
@@ -157,9 +163,25 @@ EPHPlayerRole PHMatchmakingPolicy::ResolveAuthoritativeServerRole(
 	const bool bIsDedicatedServer,
 	const bool bHunterAlreadyAssigned)
 {
-	return !bHunterAlreadyAssigned && (bIsLocalController || bIsDedicatedServer)
+	if (bIsDedicatedServer)
+	{
+		return EPHPlayerRole::Unassigned;
+	}
+
+	return !bHunterAlreadyAssigned && bIsLocalController
 		? EPHPlayerRole::Hunter
 		: EPHPlayerRole::Prop;
+}
+
+int32 PHMatchmakingPolicy::ChooseRandomHunterIndex(const int32 CandidateCount, const int32 RandomSeed)
+{
+	if (CandidateCount <= 0)
+	{
+		return INDEX_NONE;
+	}
+
+	FRandomStream RandomStream(RandomSeed);
+	return RandomStream.RandRange(0, CandidateCount - 1);
 }
 
 bool PHMatchmakingPolicy::IsJoinedClientConnection(
@@ -170,9 +192,112 @@ bool PHMatchmakingPolicy::IsJoinedClientConnection(
 	return bIsClientWorld && bHasServerConnection && bServerConnectionOpen;
 }
 
+bool PHMatchmakingPolicy::IsDedicatedSteamBackendAvailable(
+	const FName SubsystemName,
+	const bool bSubsystemEnabled,
+	const bool bSessionInterfaceValid)
+{
+	return SubsystemName == SteamSubsystemName
+		&& bSubsystemEnabled
+		&& bSessionInterfaceValid;
+}
+
+bool PHMatchmakingPolicy::ShouldLaunchReadyTwoPlayerTest(
+	const int32 ConnectedPlayerCount,
+	const int32 ReadyPlayerCount,
+	const int32 MinimumPropPlayers,
+	const bool bDedicatedServer,
+	const bool bLobbyPhase)
+{
+	return bDedicatedServer
+		&& bLobbyPhase
+		&& ConnectedPlayerCount == 2
+		&& ReadyPlayerCount == 2
+		&& MinimumPropPlayers <= 1;
+}
+
+bool PHMatchmakingPolicy::IsRosterAdmissionLocked(
+	const bool bNetworkWaitingRoom,
+	const bool bMatchFlowHasStarted,
+	const bool bRosterLockedFromTravel)
+{
+	return bRosterLockedFromTravel || (bNetworkWaitingRoom && bMatchFlowHasStarted);
+}
+
+bool PHMatchmakingPolicy::IsValidDirectConnectEndpoint(const FString& Endpoint)
+{
+	if (Endpoint.IsEmpty() || Endpoint != Endpoint.TrimStartAndEnd())
+	{
+		return false;
+	}
+
+	FString Host;
+	FString PortString;
+	if (!Endpoint.Split(TEXT(":"), &Host, &PortString)
+		|| Host.IsEmpty()
+		|| PortString.IsEmpty()
+		|| PortString.Contains(TEXT(":"))
+		|| !PortString.IsNumeric())
+	{
+		return false;
+	}
+
+	const int32 Port = FCString::Atoi(*PortString);
+	if (Port < 1 || Port > 65535)
+	{
+		return false;
+	}
+
+	TArray<FString> Octets;
+	Host.ParseIntoArray(Octets, TEXT("."), false);
+	if (Octets.Num() != 4)
+	{
+		return false;
+	}
+
+	bool bAnyNonZeroOctet = false;
+	for (const FString& Octet : Octets)
+	{
+		if (Octet.IsEmpty() || !Octet.IsNumeric())
+		{
+			return false;
+		}
+
+		const int32 Value = FCString::Atoi(*Octet);
+		if (Value < 0 || Value > 255)
+		{
+			return false;
+		}
+		bAnyNonZeroOctet |= Value != 0;
+	}
+
+	return bAnyNonZeroOctet && Host != TEXT("255.255.255.255");
+}
+
 void UPHSessionSubsystem::Initialize(FSubsystemCollectionBase& Collection)
 {
 	Super::Initialize(Collection);
+
+#if !UE_BUILD_SHIPPING
+	FString DirectConnectEndpoint;
+	if (!IsRunningDedicatedServer()
+		&& FParse::Value(FCommandLine::Get(), TEXT("PHDirectConnect="), DirectConnectEndpoint))
+	{
+		if (PHMatchmakingPolicy::IsValidDirectConnectEndpoint(DirectConnectEndpoint))
+		{
+			PendingDirectConnectEndpoint = DirectConnectEndpoint;
+			UE_LOG(LogPHSteam, Log,
+				TEXT("Direct-connect smoke requested for %s; waiting for the frontend world."),
+				*PendingDirectConnectEndpoint);
+		}
+		else
+		{
+			UE_LOG(LogPHSteam, Error,
+				TEXT("Ignoring invalid -PHDirectConnect endpoint '%s'; expected IPv4:port."),
+				*DirectConnectEndpoint);
+		}
+	}
+#endif
 
 	PostLoadMapDelegateHandle = FCoreUObjectDelegates::PostLoadMapWithWorld.AddUObject(
 		this, &UPHSessionSubsystem::HandlePostLoadMap);
@@ -225,126 +350,32 @@ void UPHSessionSubsystem::Deinitialize()
 
 void UPHSessionSubsystem::HostHunterLobby()
 {
-	if (!ValidateSteamForOperation(TEXT("HostHunterLobby")))
-	{
-		return;
-	}
-	if (MatchmakingState == EPHMatchmakingState::CreatingLobby
-		|| MatchmakingState == EPHMatchmakingState::Searching
-		|| MatchmakingState == EPHMatchmakingState::Joining
-		|| MatchmakingState == EPHMatchmakingState::Leaving)
-	{
-		FinishOperation(false, TEXT("Une opération Steam est déjà en cours."));
-		return;
-	}
-	ClearCachedMatchResults();
-
-	PendingPreference = EPHMatchmakingPreference::Hunter;
-	bAutoJoinFirstResult = true;
-	bWaitingForHunterSlot = true;
-	IOnlineSessionPtr Sessions = GetSessionInterface();
-	if (Sessions.IsValid() && Sessions->GetNamedSession(NAME_GameSession) != nullptr)
-	{
-		BeginDestroySession(EPHPendingAfterDestroy::SearchLobbies);
-		return;
-	}
-
-	StartSearchLobbies();
+	FinishOperation(false,
+		TEXT("Le protocole courant est dédié uniquement. Crée un ticket Tueur via la gateway NOVA."));
 }
 
 void UPHSessionSubsystem::FindPropLobby(const bool bAutoJoinFirstAvailable)
 {
-	if (!ValidateSteamForOperation(TEXT("FindPropLobby")))
-	{
-		return;
-	}
-	if (MatchmakingState == EPHMatchmakingState::CreatingLobby
-		|| MatchmakingState == EPHMatchmakingState::Searching
-		|| MatchmakingState == EPHMatchmakingState::Joining
-		|| MatchmakingState == EPHMatchmakingState::Leaving)
-	{
-		FinishOperation(false, TEXT("Une opération Steam est déjà en cours."));
-		return;
-	}
-	ClearCachedMatchResults();
-
-	bAutoJoinFirstResult = bAutoJoinFirstAvailable;
-	PendingPreference = EPHMatchmakingPreference::Prop;
-	bWaitingForHunterSlot = false;
-	IOnlineSessionPtr Sessions = GetSessionInterface();
-	if (Sessions.IsValid() && Sessions->GetNamedSession(NAME_GameSession) != nullptr)
-	{
-		BeginDestroySession(EPHPendingAfterDestroy::SearchLobbies);
-		return;
-	}
-
-	StartSearchLobbies();
+	(void)bAutoJoinFirstAvailable;
+	FinishOperation(false,
+		TEXT("Le protocole courant est dédié uniquement. Crée un ticket Survivant via la gateway NOVA."));
 }
 
 void UPHSessionSubsystem::FindRandomRole()
 {
-	if (!ValidateSteamForOperation(TEXT("FindRandomRole")))
-	{
-		return;
-	}
-	if (MatchmakingState == EPHMatchmakingState::CreatingLobby
-		|| MatchmakingState == EPHMatchmakingState::Searching
-		|| MatchmakingState == EPHMatchmakingState::Joining
-		|| MatchmakingState == EPHMatchmakingState::Leaving)
-	{
-		FinishOperation(false, TEXT("Une opération Steam est déjà en cours."));
-		return;
-	}
-	ClearCachedMatchResults();
-
-	PendingPreference = EPHMatchmakingPreference::Random;
-	bAutoJoinFirstResult = true;
-	bWaitingForHunterSlot = false;
-	IOnlineSessionPtr Sessions = GetSessionInterface();
-	if (Sessions.IsValid() && Sessions->GetNamedSession(NAME_GameSession) != nullptr)
-	{
-		BeginDestroySession(EPHPendingAfterDestroy::SearchLobbies);
-		return;
-	}
-
-	StartSearchLobbies();
+	FinishOperation(false,
+		TEXT("Le protocole courant est dédié uniquement. Crée un ticket Aléatoire via la gateway NOVA."));
 }
 
 void UPHSessionSubsystem::RefreshAvailability()
 {
-	if (!IsSteamAvailable()
-		|| MatchmakingState == EPHMatchmakingState::CreatingLobby
-		|| MatchmakingState == EPHMatchmakingState::Searching
-		|| MatchmakingState == EPHMatchmakingState::Joining
-		|| MatchmakingState == EPHMatchmakingState::Leaving
-		|| MatchmakingState == EPHMatchmakingState::Hosting
-		|| MatchmakingState == EPHMatchmakingState::InSession)
-	{
-		return;
-	}
-
-	PendingPreference = bWaitingForHunterSlot
-		? EPHMatchmakingPreference::Hunter
-		: EPHMatchmakingPreference::Availability;
-	bAutoJoinFirstResult = false;
-	StartSearchLobbies();
+	// The NOVA queue is authoritative; client Steam lobby scans are disabled.
 }
 
 void UPHSessionSubsystem::JoinSuggestedLobby()
 {
-	if (RankedSearchResults.IsEmpty())
-	{
-		FinishOperation(false, TEXT("Aucun lobby proposé n’est encore disponible."));
-		return;
-	}
-	if (MatchmakingState == EPHMatchmakingState::Joining)
-	{
-		return;
-	}
-	ClearCachedMatchResults();
-
-	NextJoinIndex = 0;
-	TryJoinNextLobby();
+	FinishOperation(false,
+		TEXT("La jonction manuelle de lobby est désactivée. NOVA fournit la réservation dédiée."));
 }
 
 void UPHSessionSubsystem::LeaveSessionAndReturnToLobby()
@@ -362,6 +393,14 @@ void UPHSessionSubsystem::LeaveSessionAndReturnToLobby()
 
 void UPHSessionSubsystem::LeaveSessionAndShowResults()
 {
+	if (UGameInstance* GameInstance = GetGameInstance())
+	{
+		if (UPHMatchmakingGatewaySubsystem* Gateway =
+			GameInstance->GetSubsystem<UPHMatchmakingGatewaySubsystem>())
+		{
+			Gateway->CompleteMatchAndReset();
+		}
+	}
 	SetMatchmakingState(EPHMatchmakingState::Leaving);
 	IOnlineSessionPtr Sessions = GetSessionInterface();
 	if (!Sessions.IsValid() || Sessions->GetNamedSession(NAME_GameSession) == nullptr)
@@ -380,6 +419,14 @@ void UPHSessionSubsystem::ContinueFromResultsToLobby()
 		return;
 	}
 
+	if (UGameInstance* GameInstance = GetGameInstance())
+	{
+		if (UPHMatchmakingGatewaySubsystem* Gateway =
+			GameInstance->GetSubsystem<UPHMatchmakingGatewaySubsystem>())
+		{
+			Gateway->CompleteMatchAndReset();
+		}
+	}
 	ClearCachedMatchResults();
 	ReturnToLobbyMap();
 }
@@ -396,6 +443,11 @@ bool UPHSessionSubsystem::IsCurrentWorldLobbyMap() const
 	const UWorld* World = GetWorld();
 	return World != nullptr
 		&& World->GetMapName().EndsWith(FPackageName::GetShortName(ReturnMap));
+}
+
+bool UPHSessionSubsystem::IsCurrentWorldFrontendMap() const
+{
+	return IsCurrentWorldResultsMap() || IsCurrentWorldLobbyMap();
 }
 
 void UPHSessionSubsystem::CacheMatchResults(
@@ -481,9 +533,34 @@ bool UPHSessionSubsystem::IsSteamAvailable() const
 {
 	const IOnlineSubsystem* Subsystem = Online::GetSubsystem(GetWorld());
 	return Subsystem != nullptr
-		&& Subsystem->GetSubsystemName() == SteamSubsystemName
-		&& Subsystem->IsEnabled()
-		&& Subsystem->GetSessionInterface().IsValid();
+		&& PHMatchmakingPolicy::IsDedicatedSteamBackendAvailable(
+			Subsystem->GetSubsystemName(),
+			Subsystem->IsEnabled(),
+			Subsystem->GetSessionInterface().IsValid());
+}
+
+bool UPHSessionSubsystem::ShowSteamFriendsUI()
+{
+	IOnlineSubsystem* SteamSubsystem = IOnlineSubsystem::Get(SteamSubsystemName);
+	const IOnlineExternalUIPtr ExternalUI = SteamSubsystem != nullptr
+		? SteamSubsystem->GetExternalUIInterface()
+		: nullptr;
+	if (!IsSteamAvailable() || !ExternalUI.IsValid())
+	{
+		UE_LOG(LogPHSteam, Warning, TEXT("Steam friends UI is unavailable."));
+		return false;
+	}
+
+	const bool bOpened = ExternalUI->ShowFriendsUI(0);
+	if (bOpened)
+	{
+		UE_LOG(LogPHSteam, Display, TEXT("Steam friends UI opened."));
+	}
+	else
+	{
+		UE_LOG(LogPHSteam, Warning, TEXT("Steam friends UI failed to open."));
+	}
+	return bOpened;
 }
 
 IOnlineSessionPtr UPHSessionSubsystem::GetSessionInterface() const
@@ -544,6 +621,18 @@ void UPHSessionSubsystem::StartCreateLobby()
 	const FUniqueNetIdPtr LocalUserId = Identity.IsValid() ? Identity->GetUniquePlayerId(0) : nullptr;
 	const UWorld* World = GetWorld();
 	const bool bDedicatedServer = World != nullptr && World->GetNetMode() == NM_DedicatedServer;
+	if (!bDedicatedServer)
+	{
+		FinishOperation(false,
+			TEXT("Création de listen server interdite sur le protocole dédié-only NOVA."));
+		return;
+	}
+	if (bDedicatedServer && !IsSteamAvailable())
+	{
+		FinishOperation(false,
+			TEXT("Publication dédiée annulée : le backend Steam n'est pas initialisé ; aucun fallback NULL n'est annoncé."));
+		return;
+	}
 	if (!Sessions.IsValid() || (!bDedicatedServer && !LocalUserId.IsValid()))
 	{
 		FinishOperation(false, bDedicatedServer
@@ -777,18 +866,22 @@ void UPHSessionSubsystem::HandleCreateSessionComplete(const FName SessionName, c
 	}
 	CreateSessionDelegateHandle.Reset();
 
-	if (!bWasSuccessful || SessionName != NAME_GameSession)
+	const bool bDedicatedServer = GetWorld() != nullptr && GetWorld()->GetNetMode() == NM_DedicatedServer;
+	if (!bWasSuccessful
+		|| SessionName != NAME_GameSession
+		|| (bDedicatedServer && !IsSteamAvailable()))
 	{
-		FinishOperation(false, GetWorld() != nullptr && GetWorld()->GetNetMode() == NM_DedicatedServer
+		FinishOperation(false, bDedicatedServer
 			? TEXT("La publication de la session dédiée a échoué.")
 			: TEXT("La création du lobby Hunter a échoué."));
 		return;
 	}
 
-	if (GetWorld() != nullptr && GetWorld()->GetNetMode() == NM_DedicatedServer)
+	if (bDedicatedServer)
 	{
 		SetMatchmakingState(EPHMatchmakingState::InSession);
-		FinishOperation(true, TEXT("Serveur dédié publié et prêt à recevoir les clients."));
+		FinishOperation(true,
+			TEXT("Session dédiée créée via Steam ; l'authentification GameServer et SDR reste à confirmer dans les logs SteamSockets."));
 		return;
 	}
 
@@ -1070,6 +1163,17 @@ void UPHSessionSubsystem::HandlePostLoadMap(UWorld* LoadedWorld)
 		return;
 	}
 
+#if !UE_BUILD_SHIPPING
+	if (!bDirectConnectAttempted
+		&& !PendingDirectConnectEndpoint.IsEmpty()
+		&& LoadedWorld->GetNetMode() != NM_DedicatedServer)
+	{
+		bDirectConnectAttempted = true;
+		LoadedWorld->GetTimerManager().SetTimerForNextTick(
+			FTimerDelegate::CreateUObject(this, &UPHSessionSubsystem::TryDirectConnectFromCommandLine));
+	}
+#endif
+
 	if (LoadedWorld->GetNetMode() == NM_DedicatedServer
 		&& bAutoCreateDedicatedSession
 		&& MatchmakingState != EPHMatchmakingState::CreatingLobby
@@ -1147,6 +1251,37 @@ void UPHSessionSubsystem::HandlePostLoadMap(UWorld* LoadedWorld)
 	}
 }
 
+#if !UE_BUILD_SHIPPING
+void UPHSessionSubsystem::TryDirectConnectFromCommandLine()
+{
+	if (PendingDirectConnectEndpoint.IsEmpty())
+	{
+		return;
+	}
+
+	APlayerController* PlayerController = GetGameInstance() != nullptr
+		? GetGameInstance()->GetFirstLocalPlayerController(GetWorld())
+		: nullptr;
+	if (PlayerController == nullptr)
+	{
+		UE_LOG(LogPHSteam, Error,
+			TEXT("Direct-connect smoke could not find the local player controller for %s."),
+			*PendingDirectConnectEndpoint);
+		return;
+	}
+
+	const FString ConnectEndpoint = MoveTemp(PendingDirectConnectEndpoint);
+	PendingDirectConnectEndpoint.Reset();
+	bAwaitingJoinedTravel = true;
+	SetMatchmakingState(EPHMatchmakingState::Joining);
+	FinishOperation(true, FString::Printf(
+		TEXT("Connexion directe de diagnostic vers %s..."),
+		*ConnectEndpoint));
+	UE_LOG(LogPHSteam, Log, TEXT("Starting direct-connect smoke travel to %s."), *ConnectEndpoint);
+	PlayerController->ClientTravel(ConnectEndpoint, TRAVEL_Absolute);
+}
+#endif
+
 void UPHSessionSubsystem::ConfirmJoinedTravel()
 {
 	if (!bAwaitingJoinedTravel)
@@ -1179,7 +1314,7 @@ void UPHSessionSubsystem::ConfirmJoinedTravel()
 		|| FPlatformTime::Seconds() >= JoinedTravelConfirmationDeadlineSeconds)
 	{
 		const FString FailureMessage = FString::Printf(
-			TEXT("La connexion Steam au listen server n’est pas devenue active dans le délai (net mode %d, driver %s, connexion %s)."),
+			TEXT("La connexion Steam au serveur de partie n’est pas devenue active dans le délai (net mode %d, driver %s, connexion %s)."),
 			World != nullptr ? static_cast<int32>(World->GetNetMode()) : -1,
 			NetDriver != nullptr ? *NetDriver->GetClass()->GetName() : TEXT("absent"),
 			ServerConnection != nullptr ? LexToString(ConnectionState) : TEXT("absente"));
@@ -1197,7 +1332,7 @@ void UPHSessionSubsystem::CompleteJoinedTravelSuccess()
 	RankedSearchResults.Reset();
 	LastJoinFailure.Reset();
 	SetMatchmakingState(EPHMatchmakingState::InSession);
-	FinishOperation(true, TEXT("Connexion au listen server Hunter réussie."));
+	FinishOperation(true, TEXT("Connexion au serveur de partie réussie."));
 }
 
 void UPHSessionSubsystem::HandleNetworkFailure(
@@ -1257,7 +1392,7 @@ void UPHSessionSubsystem::HandleJoinedTravelFailure(const FString& ErrorString)
 	}
 	bAwaitingJoinedTravel = false;
 	LastJoinFailure = ErrorString.IsEmpty()
-		? TEXT("La connexion réseau au listen server a échoué sans détail.")
+		? TEXT("La connexion réseau au serveur de partie a échoué sans détail.")
 		: ErrorString;
 	UE_LOG(LogPHSteam, Warning, TEXT("Lobby candidate became unusable: %s. Trying next lobby."), *ErrorString);
 	BeginDestroySession(EPHPendingAfterDestroy::RetryNextLobby);

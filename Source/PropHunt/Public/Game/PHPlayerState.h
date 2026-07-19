@@ -15,11 +15,17 @@ public:
 	APHPlayerState();
 
 	virtual void GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& OutLifetimeProps) const override;
+	virtual void CopyProperties(APlayerState* PlayerState) override;
 
 	UFUNCTION(BlueprintPure, Category = "PropHunt|Player")
 	EPHPlayerRole GetPlayerRole() const { return PlayerRole; }
 
 	void SetPlayerRole(EPHPlayerRole NewRole);
+
+	UFUNCTION(BlueprintPure, Category = "PropHunt|Lobby")
+	bool IsLobbyReady() const { return bLobbyReady; }
+
+	void SetLobbyReady(bool bNewLobbyReady);
 
 	UFUNCTION(BlueprintPure, Category = "PropHunt|Results")
 	const FPHPlayerMatchStats& GetMatchStats() const { return MatchStats; }
@@ -50,4 +56,7 @@ private:
 
 	UPROPERTY(ReplicatedUsing = OnRep_MatchStats, VisibleInstanceOnly, BlueprintReadOnly, Category = "PropHunt|Results", meta = (AllowPrivateAccess = "true"))
 	FPHPlayerMatchStats MatchStats;
+
+	UPROPERTY(Replicated, VisibleInstanceOnly, BlueprintReadOnly, Category = "PropHunt|Lobby", meta = (AllowPrivateAccess = "true"))
+	bool bLobbyReady;
 };

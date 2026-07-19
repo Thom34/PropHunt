@@ -1,0 +1,16 @@
+@{
+    EngineRoot = 'K:\UE58'
+    ProjectFile = 'PropHunt.uproject'
+    ClientArchive = 'package\client'
+    ClientContent = 'package\client\Windows'
+    ServerArchive = 'package\server'
+    ServerContent = 'package\server\LinuxServer'
+    VpsBundle = 'package\vps-bundle'
+    SteamCmd = 'BuildTools\Steam\steamcmd\steamcmd.exe'
+    SteamCredentials = 'BuildTools\Steam\steam_build.config.ini'
+    SteamAppBuild = 'BuildTools\Steam\app_build_1551300.vdf'
+    VpsHost = 'vps'
+    VpsReleaseName = 'build-prophunt-v0.1.1907001'
+    VpsIncomingRoot = '/home/ue-game/incoming'
+    VpsReleaseRoot = '/home/ue-game/releases'
+}

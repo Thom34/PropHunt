@@ -11,6 +11,7 @@
 *.uplugin text eol=lf
 *.md text eol=lf
 *.json text eol=lf
+*.sh text eol=lf
 
 # Unreal binary assets
 *.uasset filter=lfs diff=lfs merge=lfs -text lockable

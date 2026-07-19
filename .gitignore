@@ -40,6 +40,8 @@ Desktop.ini
 
 # Local Steam development files
 steam_appid.txt
+BuildTools/Steam/steam_build.config.ini
+BuildTools/Steam/steamcmd/
 
 # Secrets and machine-local configuration
 .env

@@ -50,7 +50,11 @@ if [[ "${PH_GAME_PORT}" == "${PH_QUERY_PORT}" ]]; then
 fi
 
 readonly PACKAGED_LAUNCHER="${PH_SERVER_ROOT}/PropHuntServer.sh"
-readonly SERVER_BINARY="${PH_SERVER_ROOT}/PropHunt/Binaries/Linux/PropHuntServer"
+SERVER_BINARY="${PH_SERVER_ROOT}/PropHunt/Binaries/Linux/PropHuntServer-Linux-Shipping"
+if [[ ! -f "${SERVER_BINARY}" && -f "${PH_SERVER_ROOT}/PropHunt/Binaries/Linux/PropHuntServer" ]]; then
+  SERVER_BINARY="${PH_SERVER_ROOT}/PropHunt/Binaries/Linux/PropHuntServer"
+fi
+readonly SERVER_BINARY
 
 if [[ ! -x "${PACKAGED_LAUNCHER}" || ! -x "${SERVER_BINARY}" ]]; then
   printf 'Package serveur incomplet ou non exécutable sous %s\n' "${PH_SERVER_ROOT}" >&2

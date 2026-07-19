@@ -1,7 +1,7 @@
 "DepotBuildConfig"
 {
 	"DepotID" "1551301"
-	"ContentRoot" "C:/Users/Thomas/Documents/Unreal Projects/PropHunt/package/ship/client/Windows"
+	"ContentRoot" "C:/Users/Thomas/Documents/Unreal Projects/PropHunt/package/client/Windows"
 
 	"FileMapping"
 	{

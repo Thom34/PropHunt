@@ -164,7 +164,7 @@ void UPHMatchResultsWidget::NativeOnInitialized()
 	}
 
 	CountdownLabel = AddCenteredLabel(
-		TEXT("MatchResultsCountdown"), TEXT("RETOUR AU LOBBY"), 16,
+		TEXT("MatchResultsCountdown"), TEXT("RETOUR AU MENU"), 16,
 		FLinearColor(0.62f, 0.68f, 0.76f, 1.0f), 8.0f);
 
 	ContinueButton = WidgetTree->ConstructWidget<UButton>(
@@ -173,14 +173,17 @@ void UPHMatchResultsWidget::NativeOnInitialized()
 	ContinueButton->SetVisibility(ESlateVisibility::Collapsed);
 	UTextBlock* ContinueLabel = WidgetTree->ConstructWidget<UTextBlock>(
 		UTextBlock::StaticClass(), TEXT("MatchResultsContinueLabel"));
-	ContinueLabel->SetText(FText::FromString(TEXT("CONTINUER VERS LE LOBBY")));
+	ContinueLabel->SetText(FText::FromString(TEXT("RETOUR AU MENU")));
 	ContinueLabel->SetJustification(ETextJustify::Center);
 	ContinueLabel->SetColorAndOpacity(FSlateColor(FLinearColor::White));
 	ContinueButton->AddChild(ContinueLabel);
 	ContinueButton->OnClicked.AddDynamic(this, &UPHMatchResultsWidget::HandleContinueClicked);
-	if (UVerticalBoxSlot* ButtonSlot = Content->AddChildToVerticalBox(ContinueButton))
+	if (UCanvasPanelSlot* ButtonSlot = RootPanel->AddChildToCanvas(ContinueButton))
 	{
-		ButtonSlot->SetHorizontalAlignment(HAlign_Fill);
+		ButtonSlot->SetAnchors(FAnchors(1.0f, 1.0f));
+		ButtonSlot->SetAlignment(FVector2D(1.0f, 1.0f));
+		ButtonSlot->SetPosition(FVector2D(-32.0f, -32.0f));
+		ButtonSlot->SetSize(FVector2D(260.0f, 54.0f));
 	}
 
 	SetVisibility(ESlateVisibility::Visible);

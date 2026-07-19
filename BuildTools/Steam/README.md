@@ -8,13 +8,27 @@ Configuration réservée au projet canonique :
 - projet : `C:/Users/Thomas/Documents/Unreal Projects/PropHunt/PropHunt.uproject`
 - moteur : `K:/UE58`
 
-`app_build_1551300.vdf` attend actuellement le package Windows Shipping sous
-`package/ship/client/Windows`. Aucun identifiant Steam, mot de passe ou token ne doit être ajouté au dépôt.
+`app_build_1551300.vdf` pointe uniquement vers le client courant fixe `package/client/Windows`. Le package doit
+etre Shipping, protocole 9, NOVA et contenir WaitingRoom. Les exclusions du depot retirent `*.pdb` et
+`steam_appid.txt`. Aucun identifiant Steam, mot de passe ou token ne doit etre ajoute au depot.
+
+Le validateur P9 a reussi le 2026-07-19 : EXE wrapper SHA-256
+`a6406ad31b3f40cedb3082bc9145b66a4b11a35cd484dcfaa4a5a27982e5b4d5`, UTOC
+`420ccd3a5babba2e2d074f5aecef2332bfabc473fd2c9811fd681ed74c10e40f`. Le client a ete publie uniquement sur
+`beta` : BuildID `24281930`, manifest depot `1551301` `2052834125204237865`. La branche publique n'a pas ete
+modifiee. L'upload normal passe par `DeployClientServer/Push-Client-Steam.cmd` et le SteamCMD authentifie existant.
+
+Avant tout upload, valider que les deux VDF ciblent le même package, que `L_PH_WaitingRoom` est réellement
+cuisinée, que les exclusions privées sont présentes et qu'aucun `steam_appid.txt` n'est embarqué :
+
+```powershell
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File '.\BuildTools\Steam\Test-PropHuntSteamPackage.ps1'
+```
 
 Commande d'upload à exécuter seulement après validation du package et des droits de redistribution :
 
 ```powershell
-steamcmd +login <compte_build_steam> +run_app_build "C:\Users\Thomas\Documents\Unreal Projects\PropHunt\BuildTools\Steam\app_build_1551300.vdf" +quit
+.\DeployClientServer\Push-Client-Steam.cmd
 ```
 
 Le BuildID `24247554` (manifest depot `1181572483781462574`) a été poussé le 2026-07-16 sur `beta` pour un test interne privé, avec l'autorisation
@@ -46,3 +60,14 @@ Le correctif spectateur/piquet et audio du Super Poulet jouable passe en protoco
 2026-07-17 : BuildID `24250476`, manifest depot `489858131775756902`. Le package final contient `80` entrées,
 dont les prérequis Visual C++ ; le log de jeu accidentel de l'ancien package n'est plus inclus. La lecture Steam
 authentifiée confirme `beta=24250476` et `public=24216953`.
+
+Le candidat protocole `7` du 2026-07-18 conserve les joueurs dédiés sans rôle pendant le Lobby, choisit le
+Tueur aléatoirement côté serveur à la fermeture du roster, laisse `15 s` de fenêtre joinable lorsque le roster
+réservé est atteint et autorise le 1v1 immédiat uniquement si les deux joueurs marquent explicitement prêt.
+La relecture externe, l'automation `25/25`, le validateur du package et le smoke Steam Linux P7 sont réussis.
+Après autorisation explicite d'utiliser uniquement le SteamCMD authentifié existant, ce client final2 a été
+publié sur la branche privée `beta` le 2026-07-18 : BuildID `24276270`, manifest depot
+`8793083830627277218`. SteamPipe a mappé `75` fichiers / `504 MB` et envoyé `213` nouveaux chunks. Une lecture
+Steam authentifiée confirme `beta=24276270` et manifest `8793083830627277218`; la branche publique est restée
+sur BuildID `24216953`, manifest `6133896315375195351`. La jonction multi-comptes P7 reste une campagne de test
+séparée ; cette publication privée ne vaut pas diffusion publique.

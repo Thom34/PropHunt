@@ -6,7 +6,8 @@ UPHMatchRulesDataAsset::UPHMatchRulesDataAsset()
 	: MinimumPropPlayers(1)
 	, MaximumPropPlayers(4)
 	, LobbyWaitDuration(60.0f)
-	, LobbyReadyCountdownDuration(5.0f)
+	, LobbyReadyCountdownDuration(15.0f)
+	, RosterTravelTimeoutDuration(30.0f)
 	, PreparationDuration(10.0f)
 	, HuntDuration(900.0f)
 	, EscapeDuration(180.0f)
@@ -38,12 +39,13 @@ bool UPHMatchRulesDataAsset::HasValidRules(FText* OutError) const
 	}
 
 	if (LobbyWaitDuration < 0.0f
-		|| LobbyReadyCountdownDuration < 0.0f || LobbyReadyCountdownDuration > 15.0f
+		|| LobbyReadyCountdownDuration < 15.0f || LobbyReadyCountdownDuration > 60.0f
+		|| RosterTravelTimeoutDuration < 5.0f || RosterTravelTimeoutDuration > 120.0f
 		|| PreparationDuration < 0.0f || HuntDuration <= 0.0f || EscapeDuration <= 0.0f
 		|| !FMath::IsFinite(AllPropsRetainedEliminationDelay)
 		|| AllPropsRetainedEliminationDelay < 0.1f || AllPropsRetainedEliminationDelay > 5.0f)
 	{
-		return Fail(LOCTEXT("InvalidDurations", "Match durations are invalid; the ready countdown must remain between 0 and 15 seconds and all-Props-retained elimination between 0.1 and 5 seconds."));
+		return Fail(LOCTEXT("InvalidDurations", "Match durations are invalid; the joinable ready countdown must remain between 15 and 60 seconds, roster travel timeout between 5 and 120 seconds, and all-Props-retained elimination between 0.1 and 5 seconds."));
 	}
 
 	if (ActiveObjectiveCount < 1 || RequiredObjectiveCount < 1 || RequiredObjectiveCount > ActiveObjectiveCount)

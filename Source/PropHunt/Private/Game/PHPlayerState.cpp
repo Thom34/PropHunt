@@ -6,6 +6,7 @@ DEFINE_LOG_CATEGORY_STATIC(LogPHPlayerState, Log, All);
 
 APHPlayerState::APHPlayerState()
 	: PlayerRole(EPHPlayerRole::Unassigned)
+	, bLobbyReady(false)
 {
 	bReplicates = true;
 }
@@ -16,6 +17,18 @@ void APHPlayerState::GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& OutLi
 
 	DOREPLIFETIME(APHPlayerState, PlayerRole);
 	DOREPLIFETIME(APHPlayerState, MatchStats);
+	DOREPLIFETIME(APHPlayerState, bLobbyReady);
+}
+
+void APHPlayerState::CopyProperties(APlayerState* PlayerState)
+{
+	Super::CopyProperties(PlayerState);
+	if (APHPlayerState* NewPlayerState = Cast<APHPlayerState>(PlayerState))
+	{
+		NewPlayerState->PlayerRole = PlayerRole;
+		NewPlayerState->MatchStats = MatchStats;
+		NewPlayerState->bLobbyReady = false;
+	}
 }
 
 void APHPlayerState::SetPlayerRole(const EPHPlayerRole NewRole)
@@ -36,6 +49,17 @@ void APHPlayerState::OnRep_PlayerRole(const EPHPlayerRole PreviousRole)
 	UE_LOG(LogPHPlayerState, Log, TEXT("Replicated player role %d -> %d for %s."),
 		static_cast<int32>(PreviousRole), static_cast<int32>(PlayerRole), *GetPlayerName());
 	BP_OnPlayerRoleChanged(PreviousRole, PlayerRole);
+}
+
+void APHPlayerState::SetLobbyReady(const bool bNewLobbyReady)
+{
+	if (!HasAuthority() || bLobbyReady == bNewLobbyReady)
+	{
+		return;
+	}
+
+	bLobbyReady = bNewLobbyReady;
+	ForceNetUpdate();
 }
 
 void APHPlayerState::ResetMatchStats()

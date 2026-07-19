@@ -12,7 +12,10 @@ public class PropHunt : ModuleRules
 				"Core",
 				"CoreUObject",
 				"Engine",
+				"HTTP",
 				"InputCore",
+				"Json",
+				"JsonUtilities",
 				"OnlineSubsystem",
 				"OnlineSubsystemUtils",
 				"PhysicsCore",
@@ -23,6 +26,7 @@ public class PropHunt : ModuleRules
 		PrivateDependencyModuleNames.AddRange(
 			new string[]
 			{
+				"CoreOnline",
 				"Slate",
 				"SlateCore"
 			}
@@ -30,6 +34,7 @@ public class PropHunt : ModuleRules
 
 		if (Target.Platform == UnrealTargetPlatform.Win64 || Target.Platform == UnrealTargetPlatform.Linux)
 		{
+			AddEngineThirdPartyPrivateStaticDependencies(Target, "Steamworks");
 			DynamicallyLoadedModuleNames.Add("OnlineSubsystemSteam");
 		}
 	}

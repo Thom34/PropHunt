@@ -198,11 +198,61 @@ void APHPlayerController::SetupInputComponent()
 	if (InputComponent != nullptr)
 	{
 		InputComponent->BindAction(TEXT("ToggleMenu"), IE_Pressed, this, &APHPlayerController::ToggleInGameMenu);
+		InputComponent->BindAction(TEXT("LobbyReady"), IE_Pressed, this, &APHPlayerController::ToggleLobbyReady);
 		FInputActionBinding& SpectateBinding = InputComponent->BindAction(
 			TEXT("SpectateNext"), IE_Pressed, this, &APHPlayerController::SpectateNextSurvivor);
 		// Space is also the possessed pawn's Jump action. The handler is already gated by spectator state,
 		// so let a live pawn receive the same key event.
 		SpectateBinding.bConsumeInput = false;
+	}
+}
+
+void APHPlayerController::ToggleLobbyReady()
+{
+	const APHGameState* GameState = GetWorld() != nullptr ? GetWorld()->GetGameState<APHGameState>() : nullptr;
+	const APHPlayerState* PHPlayerState = GetPlayerState<APHPlayerState>();
+	if (!IsLocalController() || GameState == nullptr || PHPlayerState == nullptr
+		|| GameState->GetMatchPhase() != EPHMatchPhase::Lobby
+		|| GameState->PlayerArray.Num() != 2
+		|| PHPlayerState->GetPlayerRole() != EPHPlayerRole::Unassigned)
+	{
+		return;
+	}
+
+	ServerSetLobbyReady(!PHPlayerState->IsLobbyReady());
+}
+
+void APHPlayerController::ServerSetLobbyReady_Implementation(const bool bReady)
+{
+	if (!HasAuthority() || GetWorld() == nullptr)
+	{
+		return;
+	}
+
+	const double NowSeconds = GetWorld()->GetTimeSeconds();
+	if (LastLobbyReadyRequestTimeSeconds >= 0.0
+		&& NowSeconds - LastLobbyReadyRequestTimeSeconds < 0.25)
+	{
+		return;
+	}
+	// Rate-limit every request, including invalid hostile requests, before the
+	// more detailed lobby-state validation below.
+	LastLobbyReadyRequestTimeSeconds = NowSeconds;
+
+	APHGameState* GameState = GetWorld() != nullptr ? GetWorld()->GetGameState<APHGameState>() : nullptr;
+	APHPlayerState* PHPlayerState = GetPlayerState<APHPlayerState>();
+	if (GetNetMode() != NM_DedicatedServer || GameState == nullptr || PHPlayerState == nullptr
+		|| GameState->GetMatchPhase() != EPHMatchPhase::Lobby
+		|| GameState->PlayerArray.Num() != 2
+		|| PHPlayerState->GetPlayerRole() != EPHPlayerRole::Unassigned)
+	{
+		return;
+	}
+
+	PHPlayerState->SetLobbyReady(bReady);
+	if (APHGameMode* GameMode = GetWorld()->GetAuthGameMode<APHGameMode>())
+	{
+		GameMode->NotifyLobbyReadyStateChanged();
 	}
 }
 
@@ -534,7 +584,12 @@ void APHPlayerController::EnsureLocalMatchmakingWidget()
 		return;
 	}
 
-	MatchmakingWidget = CreateWidget<UPHMatchmakingWidget>(this, UPHMatchmakingWidget::StaticClass());
+	TSubclassOf<UPHMatchmakingWidget> WidgetClass = MatchmakingWidgetClass.LoadSynchronous();
+	if (WidgetClass == nullptr)
+	{
+		WidgetClass = UPHMatchmakingWidget::StaticClass();
+	}
+	MatchmakingWidget = CreateWidget<UPHMatchmakingWidget>(this, WidgetClass);
 	if (MatchmakingWidget != nullptr)
 	{
 		MatchmakingWidget->AddToViewport(100);

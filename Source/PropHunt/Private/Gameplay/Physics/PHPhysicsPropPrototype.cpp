@@ -17,7 +17,7 @@
 #include "Sound/SoundBase.h"
 #include "TimerManager.h"
 
-DEFINE_LOG_CATEGORY_STATIC(LogPHPhysicsProp, Log, All);
+DEFINE_LOG_CATEGORY_STATIC(LogPHPhysicsPropPrototype, Log, All);
 
 APHPhysicsPropPrototype::APHPhysicsPropPrototype()
 	: ImpactSequence(0)
@@ -179,13 +179,13 @@ void APHPhysicsPropPrototype::PossessedBy(AController* NewController)
 {
 	Super::PossessedBy(NewController);
 	GetWorldTimerManager().ClearTimer(AutoResetTimerHandle);
-	UE_LOG(LogPHPhysicsProp, Log, TEXT("Playable Physics Prop %s possessed by %s on authority."),
+	UE_LOG(LogPHPhysicsPropPrototype, Log, TEXT("Playable Physics Prop %s possessed by %s on authority."),
 		*GetName(), NewController != nullptr ? *NewController->GetName() : TEXT("none"));
 }
 
 void APHPhysicsPropPrototype::UnPossessed()
 {
-	UE_LOG(LogPHPhysicsProp, Log, TEXT("Playable Physics Prop %s unpossessed on authority."), *GetName());
+	UE_LOG(LogPHPhysicsPropPrototype, Log, TEXT("Playable Physics Prop %s unpossessed on authority."), *GetName());
 	Super::UnPossessed();
 	ServerForwardInput = 0.0f;
 	ServerRightInput = 0.0f;
@@ -284,7 +284,7 @@ void APHPhysicsPropPrototype::ApplyServerControlIntent(const float DeltaSeconds)
 	if (bGroundedNow && !bWasGrounded && JumpsUsed > 0)
 	{
 		JumpsUsed = 0;
-		UE_LOG(LogPHPhysicsProp, Verbose, TEXT("Jump count reset after %s landed."), *GetName());
+		UE_LOG(LogPHPhysicsPropPrototype, Verbose, TEXT("Jump count reset after %s landed."), *GetName());
 	}
 	bWasGrounded = bGroundedNow;
 
@@ -294,7 +294,7 @@ void APHPhysicsPropPrototype::ApplyServerControlIntent(const float DeltaSeconds)
 	{
 		if (!bMovementWasActive)
 		{
-			UE_LOG(LogPHPhysicsProp, Log, TEXT("Authoritative movement started for %s at %s."),
+			UE_LOG(LogPHPhysicsPropPrototype, Log, TEXT("Authoritative movement started for %s at %s."),
 				*GetName(), *PhysicsMesh->GetComponentLocation().ToCompactString());
 		}
 
@@ -430,7 +430,7 @@ void APHPhysicsPropPrototype::ApplyServerControlIntent(const float DeltaSeconds)
 	}
 	else if (bMovementWasActive)
 	{
-		UE_LOG(LogPHPhysicsProp, Log, TEXT("Authoritative movement stopped for %s at %s with linear %s and angular %s deg/s."),
+		UE_LOG(LogPHPhysicsPropPrototype, Log, TEXT("Authoritative movement stopped for %s at %s with linear %s and angular %s deg/s."),
 			*GetName(),
 			*PhysicsMesh->GetComponentLocation().ToCompactString(),
 			*PhysicsMesh->GetPhysicsLinearVelocity().ToCompactString(),
@@ -525,7 +525,7 @@ void APHPhysicsPropPrototype::TryJump()
 	PhysicsMesh->AddImpulse(JumpImpulse);
 	PhysicsMesh->WakeAllRigidBodies();
 	ForceNetUpdate();
-	UE_LOG(LogPHPhysicsProp, Log,
+	UE_LOG(LogPHPhysicsPropPrototype, Log,
 		TEXT("Authoritative jump %d/%d accepted for %s: impulse=%.1f vertical=%.1f horizontal=%.1f grounded=%s."),
 		JumpsUsed,
 		SafeMaximumJumpCount,
@@ -690,7 +690,7 @@ void APHPhysicsPropPrototype::OnPhysicsHit(
 	MulticastPlayImpactSound(ImpactLocation);
 	ForceNetUpdate();
 
-	UE_LOG(LogPHPhysicsProp, Log, TEXT("Authoritative impact %d for %s: impulse %.2f, mass %.3f kg, threshold %.2f, other %s."),
+	UE_LOG(LogPHPhysicsPropPrototype, Log, TEXT("Authoritative impact %d for %s: impulse %.2f, mass %.3f kg, threshold %.2f, other %s."),
 		ImpactSequence, *GetName(), NormalImpulse.Size(), PhysicsMesh->GetMass(), Threshold,
 		OtherActor != nullptr ? *OtherActor->GetName() : TEXT("none"));
 }
@@ -698,7 +698,7 @@ void APHPhysicsPropPrototype::OnPhysicsHit(
 void APHPhysicsPropPrototype::OnRep_Definition()
 {
 	ApplyDefinition(true);
-	UE_LOG(LogPHPhysicsProp, Log, TEXT("Physics Prop definition replicated to %s on local role %d."),
+	UE_LOG(LogPHPhysicsPropPrototype, Log, TEXT("Physics Prop definition replicated to %s on local role %d."),
 		*GetName(), static_cast<int32>(GetLocalRole()));
 }
 
@@ -720,7 +720,7 @@ void APHPhysicsPropPrototype::MulticastPlayImpactSound_Implementation(const FVec
 		AudioComponent->SetWorldLocation(ImpactLocation);
 		AudioComponent->RegisterComponent();
 		AudioComponent->Play();
-		UE_LOG(LogPHPhysicsProp, Log, TEXT("Impact sound multicast received for %s on local role %d at %s."),
+		UE_LOG(LogPHPhysicsPropPrototype, Log, TEXT("Impact sound multicast received for %s on local role %d at %s."),
 			*GetName(), static_cast<int32>(GetLocalRole()), *FVector(ImpactLocation).ToCompactString());
 	}
 }
@@ -744,7 +744,7 @@ void APHPhysicsPropPrototype::ResetTestDrop()
 	JumpsUsed = 0;
 	bWasGrounded = false;
 	ForceNetUpdate();
-	UE_LOG(LogPHPhysicsProp, Log, TEXT("Server reset Physics Prop test drop for %s."), *GetName());
+	UE_LOG(LogPHPhysicsPropPrototype, Log, TEXT("Server reset Physics Prop test drop for %s."), *GetName());
 }
 
 #if !UE_BUILD_SHIPPING
@@ -818,7 +818,7 @@ void APHPhysicsPropPrototype::ReportJumpSmoke()
 		&& JumpSmokeCountAfterThirdAttempt == Definition->MaximumJumpCount;
 	if (bSucceeded)
 	{
-		UE_LOG(LogPHPhysicsProp, Log,
+		UE_LOG(LogPHPhysicsPropPrototype, Log,
 			TEXT("Physics jump smoke result: before-first=%.1f first=%.1f before-second=%.1f second=%.1f right-dot=%.3f jumps=%d/%d result=success."),
 			JumpSmokePreJumpHorizontalSpeed,
 			JumpSmokeFirstHorizontalSpeed,
@@ -830,7 +830,7 @@ void APHPhysicsPropPrototype::ReportJumpSmoke()
 	}
 	else
 	{
-		UE_LOG(LogPHPhysicsProp, Error,
+		UE_LOG(LogPHPhysicsPropPrototype, Error,
 			TEXT("Physics jump smoke result: before-first=%.1f first=%.1f before-second=%.1f second=%.1f right-dot=%.3f jumps=%d/%d result=failure."),
 			JumpSmokePreJumpHorizontalSpeed,
 			JumpSmokeFirstHorizontalSpeed,

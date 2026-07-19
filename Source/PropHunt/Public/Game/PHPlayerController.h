@@ -14,7 +14,7 @@ class UPHInGameMenuWidget;
 class UPHMatchResultsWidget;
 class UPHMatchmakingWidget;
 
-UCLASS(Blueprintable)
+UCLASS(Blueprintable, Config=Game)
 class PROPHUNT_API APHPlayerController : public APlayerController
 {
 	GENERATED_BODY()
@@ -57,6 +57,10 @@ private:
 	void ToggleInGameMenu();
 	void SpectateNextSurvivor();
 	void RefreshSpectatorTarget(bool bAdvance);
+	void ToggleLobbyReady();
+
+	UFUNCTION(Server, Reliable)
+	void ServerSetLobbyReady(bool bReady);
 
 	UFUNCTION(Server, Reliable)
 	void ServerRegisterCaptureSmokeRole(uint8 SmokeRole);
@@ -88,6 +92,9 @@ private:
 	UPROPERTY(Transient)
 	TObjectPtr<UPHMatchmakingWidget> MatchmakingWidget;
 
+	UPROPERTY(Config, EditDefaultsOnly, Category = "PropHunt|UI")
+	TSoftClassPtr<UPHMatchmakingWidget> MatchmakingWidgetClass;
+
 	UPROPERTY(Transient)
 	TObjectPtr<UPHMatchResultsWidget> MatchResultsWidget;
 
@@ -96,6 +103,7 @@ private:
 
 	TWeakObjectPtr<APHPropCharacter> SpectatedProp;
 	bool bSpectatingProps = false;
+	double LastLobbyReadyRequestTimeSeconds = -1.0;
 
 #if !UE_BUILD_SHIPPING
 	void SeedMatchResultsPreview();

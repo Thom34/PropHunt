@@ -22,8 +22,11 @@ public:
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "PropHunt|Match|Timing", meta = (ClampMin = "0.0", Units = "s"))
 	float LobbyWaitDuration;
 
-	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "PropHunt|Match|Timing", meta = (ClampMin = "0.0", ClampMax = "15.0", Units = "s"))
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "PropHunt|Match|Timing", meta = (ClampMin = "15.0", ClampMax = "60.0", Units = "s"))
 	float LobbyReadyCountdownDuration;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "PropHunt|Match|Timing", meta = (ClampMin = "5.0", ClampMax = "120.0", Units = "s"))
+	float RosterTravelTimeoutDuration;
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "PropHunt|Match|Timing", meta = (ClampMin = "0.0", Units = "s"))
 	float PreparationDuration;

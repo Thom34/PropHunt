@@ -83,7 +83,11 @@ require_file() {
 }
 
 readonly launcher="${package_root}/PropHuntServer.sh"
-readonly binary="${package_root}/PropHunt/Binaries/Linux/PropHuntServer"
+binary="${package_root}/PropHunt/Binaries/Linux/PropHuntServer-Linux-Shipping"
+if [[ ! -f "${binary}" && -f "${package_root}/PropHunt/Binaries/Linux/PropHuntServer" ]]; then
+  binary="${package_root}/PropHunt/Binaries/Linux/PropHuntServer"
+fi
+readonly binary
 readonly steam_api="${package_root}/Engine/Binaries/ThirdParty/Steamworks/Steamv164/x86_64-unknown-linux-gnu/libsteam_api.so"
 
 require_file "${launcher}" 'Lanceur packagé'

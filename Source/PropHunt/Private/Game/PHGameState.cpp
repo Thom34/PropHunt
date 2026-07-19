@@ -9,6 +9,7 @@ APHGameState::APHGameState()
 	, PhaseEndServerTime(0.0f)
 	, MatchSeed(0)
 	, CompletedObjectiveCount(0)
+	, RequiredObjectiveCount(0)
 	, ExpectedPlayerCount(0)
 	, MatchEndReason(EPHMatchEndReason::None)
 {
@@ -23,6 +24,7 @@ void APHGameState::GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& OutLife
 	DOREPLIFETIME(APHGameState, PhaseEndServerTime);
 	DOREPLIFETIME(APHGameState, MatchSeed);
 	DOREPLIFETIME(APHGameState, CompletedObjectiveCount);
+	DOREPLIFETIME(APHGameState, RequiredObjectiveCount);
 	DOREPLIFETIME(APHGameState, ExpectedPlayerCount);
 	DOREPLIFETIME(APHGameState, MatchEndReason);
 	DOREPLIFETIME(APHGameState, MatchResultsSnapshot);
@@ -68,6 +70,16 @@ void APHGameState::SetCompletedObjectiveCount(const int32 NewCount)
 	if (HasAuthority() && CompletedObjectiveCount != NewCount)
 	{
 		CompletedObjectiveCount = FMath::Max(0, NewCount);
+		BP_OnMatchStateChanged();
+		ForceNetUpdate();
+	}
+}
+
+void APHGameState::SetRequiredObjectiveCount(const int32 NewCount)
+{
+	if (HasAuthority() && RequiredObjectiveCount != NewCount)
+	{
+		RequiredObjectiveCount = FMath::Max(0, NewCount);
 		BP_OnMatchStateChanged();
 		ForceNetUpdate();
 	}

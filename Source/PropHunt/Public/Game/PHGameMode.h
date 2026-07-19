@@ -37,6 +37,7 @@ public:
 	void NotifyPropEliminated(APHPropCharacter& EliminatedProp);
 	void NotifyPropRetained(APHPropCharacter& RetainedProp);
 	void NotifyPropEscaped(APHPropCharacter& EscapedProp);
+	void NotifyLobbyReadyStateChanged();
 
 #if !UE_BUILD_SHIPPING
 	void ForceEscapePhaseForSmoke();
@@ -47,9 +48,16 @@ protected:
 	void FinishLobbyWait();
 	void CancelLobbyWait();
 	void AssignRole(APlayerController& NewPlayer);
+	bool AssignDedicatedRosterRoles();
+	void ResetLobbyReadyStates();
+	void TravelWaitingRoomToMatch();
+	void TryCompleteRosterTravel();
+	void AbortLockedRosterTravel(const TCHAR* Reason);
+	void ConfigureWaitingRoomController(APlayerController& PlayerController) const;
 	void BeginPhase(EPHMatchPhase NewPhase);
 	void AdvanceTimedPhase();
 	void ReturnPlayersToLobbyAfterResults();
+	void TravelReusableWorkerToWaitingRoom();
 	void FinishMatch(EPHMatchEndReason EndReason);
 	void BuildAndPublishMatchResults(EPHMatchEndReason EndReason);
 	void EvaluateAllRemainingPropsRetained(const APHPropCharacter* IgnoredProp = nullptr);
@@ -71,6 +79,8 @@ private:
 
 	FTimerHandle PhaseTimerHandle;
 	FTimerHandle LobbyWaitTimerHandle;
+	FTimerHandle RosterTravelWaitTimerHandle;
+	FTimerHandle WaitingRoomReturnTimerHandle;
 	UPROPERTY(Transient)
 	TSet<TObjectPtr<APHObjectiveActor>> CompletedObjectives;
 
@@ -78,6 +88,9 @@ private:
 	TArray<FPHMatchResultRow> DepartedResultRows;
 	bool bMatchFlowHasStarted;
 	bool bLobbyReadyCountdownActive;
+	bool bNetworkWaitingRoom;
+	bool bRosterLockedFromTravel;
+	float RosterTravelDeadlineWorldSeconds;
 	int32 ExpectedPlayerCount;
 	int32 EscapedPropCount;
 #if !UE_BUILD_SHIPPING

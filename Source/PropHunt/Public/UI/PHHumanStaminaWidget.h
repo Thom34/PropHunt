@@ -6,7 +6,9 @@
 #include "PHHumanStaminaWidget.generated.h"
 
 class UProgressBar;
+class UBorder;
 class UTextBlock;
+class APHGameState;
 
 UCLASS()
 class PROPHUNT_API UPHHumanStaminaWidget : public UUserWidget
@@ -18,6 +20,8 @@ protected:
 	virtual void NativeTick(const FGeometry& MyGeometry, float InDeltaTime) override;
 
 private:
+	void UpdateRosterPresentation(const APHGameState* GameState);
+
 	UPROPERTY(Transient)
 	TObjectPtr<UProgressBar> StaminaBar;
 
@@ -40,5 +44,17 @@ private:
 	TObjectPtr<UTextBlock> MatchTimerLabel;
 
 	UPROPERTY(Transient)
+	TObjectPtr<UTextBlock> ObjectiveSummaryLabel;
+
+	UPROPERTY(Transient)
 	TObjectPtr<UTextBlock> InteractionPromptLabel;
+
+	UPROPERTY(Transient)
+	TArray<TObjectPtr<UBorder>> RosterCards;
+
+	UPROPERTY(Transient)
+	TArray<TObjectPtr<UTextBlock>> RosterPortraitLabels;
+
+	UPROPERTY(Transient)
+	TArray<TObjectPtr<UTextBlock>> RosterStatusLabels;
 };

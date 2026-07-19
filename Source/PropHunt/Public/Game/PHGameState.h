@@ -29,6 +29,9 @@ public:
 	int32 GetCompletedObjectiveCount() const { return CompletedObjectiveCount; }
 
 	UFUNCTION(BlueprintPure, Category = "PropHunt|Match")
+	int32 GetRequiredObjectiveCount() const { return RequiredObjectiveCount; }
+
+	UFUNCTION(BlueprintPure, Category = "PropHunt|Match")
 	int32 GetExpectedPlayerCount() const { return ExpectedPlayerCount; }
 
 	UFUNCTION(BlueprintPure, Category = "PropHunt|Match")
@@ -43,6 +46,7 @@ public:
 	void SetMatchPhase(EPHMatchPhase NewPhase, float DurationSeconds);
 	void SetMatchSeed(int32 NewSeed);
 	void SetCompletedObjectiveCount(int32 NewCount);
+	void SetRequiredObjectiveCount(int32 NewCount);
 	void SetExpectedPlayerCount(int32 NewCount);
 	void SetMatchEndReason(EPHMatchEndReason NewReason);
 	void SetMatchResultsSnapshot(const FPHMatchResultsSnapshot& NewSnapshot);
@@ -79,6 +83,9 @@ private:
 
 	UPROPERTY(ReplicatedUsing = OnRep_MatchStateChanged, VisibleInstanceOnly, BlueprintReadOnly, Category = "PropHunt|Match", meta = (AllowPrivateAccess = "true"))
 	int32 CompletedObjectiveCount;
+
+	UPROPERTY(ReplicatedUsing = OnRep_MatchStateChanged, VisibleInstanceOnly, BlueprintReadOnly, Category = "PropHunt|Match", meta = (AllowPrivateAccess = "true"))
+	int32 RequiredObjectiveCount;
 
 	UPROPERTY(ReplicatedUsing = OnRep_MatchStateChanged, VisibleInstanceOnly, BlueprintReadOnly, Category = "PropHunt|Match", meta = (AllowPrivateAccess = "true"))
 	int32 ExpectedPlayerCount;

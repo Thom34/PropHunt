@@ -112,7 +112,8 @@ namespace PHMatchmakingPolicy
 		int32 VisibleHunterLobbyCount,
 		int32 AvailableHunterLobbyCount,
 		int32 MaximumHunterLobbyCount,
-		int32 AvailableUnassignedHunterLobbyCount = 0);
+		int32 AvailableUnassignedHunterLobbyCount = 0,
+		bool bAllowListenServerCreation = false);
 
 	PROPHUNT_API FPHSessionHostingPolicy ResolveSessionHostingPolicy(bool bIsDedicatedServer);
 
@@ -125,10 +126,31 @@ namespace PHMatchmakingPolicy
 		bool bIsDedicatedServer,
 		bool bHunterAlreadyAssigned);
 
+	PROPHUNT_API int32 ChooseRandomHunterIndex(int32 CandidateCount, int32 RandomSeed);
+
 	PROPHUNT_API bool IsJoinedClientConnection(
 		bool bIsClientWorld,
 		bool bHasServerConnection,
 		bool bServerConnectionOpen);
+
+	PROPHUNT_API bool IsDedicatedSteamBackendAvailable(
+		FName SubsystemName,
+		bool bSubsystemEnabled,
+		bool bSessionInterfaceValid);
+
+	PROPHUNT_API bool ShouldLaunchReadyTwoPlayerTest(
+		int32 ConnectedPlayerCount,
+		int32 ReadyPlayerCount,
+		int32 MinimumPropPlayers,
+		bool bDedicatedServer,
+		bool bLobbyPhase);
+
+	PROPHUNT_API bool IsRosterAdmissionLocked(
+		bool bNetworkWaitingRoom,
+		bool bMatchFlowHasStarted,
+		bool bRosterLockedFromTravel);
+
+	PROPHUNT_API bool IsValidDirectConnectEndpoint(const FString& Endpoint);
 }
 
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FPHMatchmakingStateChanged, EPHMatchmakingState, NewState);
@@ -178,9 +200,11 @@ public:
 	UFUNCTION(BlueprintPure, Category = "PropHunt|Steam")
 	bool IsCurrentWorldLobbyMap() const;
 
-	bool IsCurrentWorldFrontendMap() const
+	bool IsCurrentWorldFrontendMap() const;
+
+	const FString& GetMatchMap() const
 	{
-		return IsCurrentWorldResultsMap() || IsCurrentWorldLobbyMap();
+		return MatchMap;
 	}
 
 	UFUNCTION(BlueprintCallable, Category = "PropHunt|Results")
@@ -238,10 +262,20 @@ public:
 	UFUNCTION(BlueprintPure, Category = "PropHunt|Steam")
 	bool IsSteamAvailable() const;
 
+	/** Opens Steam's in-game friends panel so the player can invite a friend to launch PropHunt. */
+	UFUNCTION(BlueprintCallable, Category = "PropHunt|Steam")
+	bool ShowSteamFriendsUI();
+
 	UFUNCTION(BlueprintPure, Category = "PropHunt|Steam")
 	int32 GetProtocolVersion() const
 	{
 		return ProtocolVersion;
+	}
+
+	UFUNCTION(BlueprintPure, Category = "PropHunt|Steam")
+	FString GetReleaseVersion() const
+	{
+		return ReleaseVersion;
 	}
 
 	float GetJoinedTravelConfirmationTimeoutSeconds() const
@@ -299,6 +333,9 @@ private:
 	void HandleJoinSessionComplete(FName SessionName, EOnJoinSessionCompleteResult::Type Result);
 	void HandleDestroySessionComplete(FName SessionName, bool bWasSuccessful);
 	void HandlePostLoadMap(UWorld* LoadedWorld);
+#if !UE_BUILD_SHIPPING
+	void TryDirectConnectFromCommandLine();
+#endif
 	void ConfirmJoinedTravel();
 	void CompleteJoinedTravelSuccess();
 	void HandleNetworkFailure(UWorld* World, UNetDriver* NetDriver, ENetworkFailure::Type FailureType, const FString& ErrorString);
@@ -313,7 +350,7 @@ private:
 	FString ResultsMap = TEXT("/Game/PropHunt/Maps/L_PH_Results");
 
 	UPROPERTY(Config)
-	FString ReturnMap = TEXT("/Game/PropHunt/Maps/L_PH_Lobby");
+	FString ReturnMap = TEXT("/Game/PropHunt/Tests/L_PH_Intro");
 
 	UPROPERTY(Config)
 	int32 MaxLobbyPlayers = 5;
@@ -325,7 +362,11 @@ private:
 	int32 MaxHunterLobbies = 2;
 
 	UPROPERTY(Config)
-	int32 ProtocolVersion = 6;
+	int32 ProtocolVersion = 91;
+
+	/** Exact client/server/gateway release identifier. Dotted because NOVA build IDs are strings. */
+	UPROPERTY(Config)
+	FString ReleaseVersion = TEXT("0.1.1907001");
 
 	UPROPERTY(Config)
 	float JoinedTravelConfirmationTimeoutSeconds = 30.0f;
@@ -370,6 +411,10 @@ private:
 	bool bAwaitingHostTravel = false;
 	bool bAwaitingJoinedTravel = false;
 	bool bWaitingForHunterSlot = false;
+#if !UE_BUILD_SHIPPING
+	bool bDirectConnectAttempted = false;
+	FString PendingDirectConnectEndpoint;
+#endif
 	EPHMatchmakingPreference PendingPreference = EPHMatchmakingPreference::Prop;
 	EPHPendingAfterDestroy PendingAfterDestroy = EPHPendingAfterDestroy::None;
 

@@ -1598,9 +1598,11 @@ void UPHMatchmakingWidget::RefreshLobbyPresentation()
 	{
 		if (UImage* SurvivorIcon = LobbySurvivorReadyIcons[SlotIndex])
 		{
-			SurvivorIcon->SetVisibility(SlotIndex < SurvivorsPresent
-				? ESlateVisibility::HitTestInvisible
-				: ESlateVisibility::Collapsed);
+			const bool bSurvivorPresent = SlotIndex < SurvivorsPresent;
+			SurvivorIcon->SetVisibility(ESlateVisibility::HitTestInvisible);
+			SurvivorIcon->SetColorAndOpacity(bSurvivorPresent
+				? FLinearColor(0.40f, 0.86f, 1.0f, 1.0f)
+				: FLinearColor(0.20f, 0.34f, 0.42f, 0.24f));
 		}
 	}
 	if (LobbyHunterReadyIcon != nullptr)
@@ -1880,7 +1882,9 @@ void UPHMatchmakingWidget::RefreshPodiumInviteButtons()
 		}
 
 		FVector2D InvitePosition;
-		const FVector InviteWorldPosition = Marker->GetActorLocation() + FVector(0.0f, 0.0f, 205.0f);
+		// Keep the empty-slot action visually attached to the missing character,
+		// around upper-body height rather than floating far above the lineup.
+		const FVector InviteWorldPosition = Marker->GetActorLocation() + FVector(0.0f, 0.0f, 125.0f);
 		if (!UWidgetLayoutLibrary::ProjectWorldLocationToWidgetPosition(
 			PlayerController, InviteWorldPosition, InvitePosition, false))
 		{

@@ -42,6 +42,9 @@ public:
 		const FString& LocalPlayerName,
 		int32 LocalPlayerId);
 
+	/** Redundant client-side path used when the replicated GameState snapshot arrives before the RPC. */
+	void HandleReplicatedFinalResults(const FPHMatchResultsSnapshot& FinalResults);
+
 	UFUNCTION(BlueprintPure, Category = "PropHunt|Spectator")
 	bool IsSpectatingSurvivor() const { return bSpectatingProps && SpectatedProp.IsValid(); }
 
@@ -103,6 +106,7 @@ private:
 
 	TWeakObjectPtr<APHPropCharacter> SpectatedProp;
 	bool bSpectatingProps = false;
+	bool bFinalResultsTransitionStarted = false;
 	double LastLobbyReadyRequestTimeSeconds = -1.0;
 
 #if !UE_BUILD_SHIPPING

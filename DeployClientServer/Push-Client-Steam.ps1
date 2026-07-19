@@ -1,5 +1,10 @@
 [CmdletBinding()]
-param([string]$SteamCmdPath, [string]$SteamCredentialsPath)
+param(
+    [string]$SteamCmdPath,
+    [string]$SteamCredentialsPath,
+    [string]$VpsHost,
+    [switch]$SkipReadiness
+)
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
@@ -8,6 +13,7 @@ $projectRoot = [System.IO.Path]::GetFullPath((Join-Path $scriptRoot '..'))
 $configPath = Join-Path $scriptRoot 'deploy.config.psd1'
 $config = & ([ScriptBlock]::Create([System.IO.File]::ReadAllText($configPath)))
 if ($config -isnot [hashtable]) { throw "Configuration de deploiement invalide: $configPath" }
+if (-not $VpsHost) { $VpsHost = [string]$config.VpsHost }
 if (-not $SteamCmdPath) { $SteamCmdPath = $config.SteamCmd }
 if (-not $SteamCredentialsPath) { $SteamCredentialsPath = $config.SteamCredentials }
 if (-not [System.IO.Path]::IsPathRooted($SteamCmdPath)) {
@@ -21,7 +27,24 @@ foreach ($required in @($SteamCmdPath, $SteamCredentialsPath, $appBuild)) {
     if (-not (Test-Path -LiteralPath $required -PathType Leaf)) { throw "Fichier obligatoire absent: $required" }
 }
 
+if (-not $SkipReadiness) {
+    & (Join-Path $scriptRoot 'Test-ReleaseReadiness.ps1') -PostBuild -ArtifactScope Client
+}
+
 & (Join-Path $projectRoot 'BuildTools\Version\Test-PropHuntVersion.ps1')
+
+$versionManifest = Get-Content -LiteralPath (Join-Path $projectRoot 'BuildTools\Version\PropHuntVersion.json') -Raw | ConvertFrom-Json
+$healthText = & ssh $VpsHost 'curl -fsS http://127.0.0.1:8790/healthz'
+if ($LASTEXITCODE -ne 0) { throw 'Publication Steam refusée: health gateway VPS inaccessible.' }
+$health = $healthText | ConvertFrom-Json
+$healthBuild = [string]$health.build_id
+$healthProtocol = [int]$health.protocol_version
+$expectedBuild = [string]$versionManifest.release_version
+$expectedProtocol = [int]$versionManifest.protocol_version
+if (-not $health.ok -or $healthBuild -ne $expectedBuild -or $healthProtocol -ne $expectedProtocol) {
+    throw "Publication Steam refusée: VPS=$($health.build_id)/$($health.protocol_version), candidat=$($versionManifest.release_version)/$($versionManifest.protocol_version)."
+}
+Write-Host "[gate] VPS prêt pour le client $($versionManifest.release_version) / protocole $($versionManifest.protocol_version)."
 
 & (Join-Path $projectRoot 'BuildTools\Steam\Test-PropHuntSteamPackage.ps1')
 

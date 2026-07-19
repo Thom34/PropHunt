@@ -11,6 +11,7 @@ class UButton;
 class UBorder;
 class UCanvasPanel;
 class UImage;
+class UVerticalBox;
 class UScrollBox;
 class USizeBox;
 class UTextBlock;
@@ -101,7 +102,7 @@ private:
 	void RefreshLocalSteamIdentity();
 	void RefreshClientUpdateNotice();
 	void ShowRoleTooltip(UButton* AnchorButton, UTexture2D* Icon, const FString& Title, const FString& Description, const FLinearColor& AccentColor);
-	void SetButtonsEnabled(bool bRoleButtonsEnabled, bool bCancelEnabled);
+	void SetButtonsEnabled(bool bRoleButtonsEnabled, bool bCancelEnabled, bool bShowCancel = false);
 	void SetStatus(const FString& Status);
 	UPHSessionSubsystem* GetSessionSubsystem() const;
 	UPHMatchmakingGatewaySubsystem* GetGatewaySubsystem() const;
@@ -215,7 +216,13 @@ private:
 	TObjectPtr<UTextBlock> LobbyCountdownLabel;
 
 	UPROPERTY(Transient)
-	TArray<TObjectPtr<UTextBlock>> SurvivorSlotLabels;
+	TObjectPtr<UTextBlock> LobbyRosterCountLabel;
+
+	UPROPERTY(Transient)
+	TArray<TObjectPtr<UImage>> LobbySurvivorReadyIcons;
+
+	UPROPERTY(Transient)
+	TObjectPtr<UImage> LobbyHunterReadyIcon;
 
 	UPROPERTY(Transient)
 	TArray<TObjectPtr<AActor>> LobbyPreviewActors;
@@ -225,6 +232,12 @@ private:
 
 	UPROPERTY(Transient)
 	TArray<TObjectPtr<UButton>> PodiumInviteButtons;
+
+	UPROPERTY(Transient)
+	TArray<TObjectPtr<UBorder>> PodiumNameCards;
+
+	UPROPERTY(Transient)
+	TArray<TObjectPtr<UTextBlock>> PodiumNameLabels;
 
 	TArray<int32> PreviewedSurvivorSlots;
 	bool bPreviewedPrivateHunter = false;
@@ -249,4 +262,7 @@ private:
 
 	UPROPERTY(Transient)
 	TObjectPtr<UButton> CustomizationButton;
+
+	UPROPERTY(Transient)
+	TObjectPtr<UVerticalBox> RoleActionsPanel;
 };

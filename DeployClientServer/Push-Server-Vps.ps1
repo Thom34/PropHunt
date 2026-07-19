@@ -4,6 +4,7 @@ param(
     [string]$ReleaseName,
     [ValidateSet('Auto', 'Reuse', 'Regenerate')]
     [string]$BundleMode = 'Auto',
+    [switch]$SkipReadiness,
     [switch]$PlanOnly
 )
 
@@ -16,6 +17,9 @@ $config = & ([ScriptBlock]::Create([System.IO.File]::ReadAllText($configPath)))
 if ($config -isnot [hashtable]) { throw "Configuration de deploiement invalide: $configPath" }
 if (-not $VpsHost) { $VpsHost = $config.VpsHost }
 if (-not $ReleaseName) { $ReleaseName = $config.VpsReleaseName }
+if (-not $SkipReadiness) {
+    & (Join-Path $scriptRoot 'Test-ReleaseReadiness.ps1') -PostBuild -ArtifactScope Server -PlanOnly:$PlanOnly
+}
 & (Join-Path $projectRoot 'BuildTools\Version\Test-PropHuntVersion.ps1')
 $versionManifest = Get-Content -LiteralPath (Join-Path $projectRoot 'BuildTools\Version\PropHuntVersion.json') -Raw | ConvertFrom-Json
 if ($ReleaseName -ne [string]$versionManifest.nova_release_name) { throw "Nom de release VPS incohérent: $ReleaseName" }
@@ -43,7 +47,18 @@ if ($BundleMode -eq 'Auto' -and $bundleComplete) {
     ) {
         $mustGenerate = $true
     } else {
-        $generatedAt = [DateTimeOffset]::Parse([string]$bundleManifest.generatedAtUtc).UtcDateTime
+        $generatedAtText = [string]$bundleManifest.generatedAtUtc
+        $generatedAtValue = [DateTimeOffset]::MinValue
+        $dateStyles = [Globalization.DateTimeStyles]::AssumeUniversal -bor [Globalization.DateTimeStyles]::AdjustToUniversal
+        if (-not [DateTimeOffset]::TryParse(
+            $generatedAtText,
+            [Globalization.CultureInfo]::InvariantCulture,
+            $dateStyles,
+            [ref]$generatedAtValue
+        )) {
+            throw "Date generatedAtUtc invalide dans le manifeste VPS: $generatedAtText"
+        }
+        $generatedAt = $generatedAtValue.UtcDateTime
         $newerInput = Get-ChildItem -LiteralPath $serverRoot, (Join-Path $projectRoot 'BuildTools\Server\Linux') -Recurse -File |
             Where-Object { $_.LastWriteTimeUtc -gt $generatedAt } |
             Select-Object -First 1
@@ -58,7 +73,7 @@ if ($BundleMode -eq 'Reuse' -and -not $bundleComplete) {
 }
 if ($PlanOnly -and $mustGenerate) {
     Write-Host "[PLAN UNIQUEMENT] Le bundle serait archivé/régénéré avec BundleMode=$BundleMode; aucun fichier ni hôte modifié."
-    exit 0
+    return
 }
 
 if ($mustGenerate -and (Test-Path -LiteralPath $bundleRoot)) {
@@ -104,7 +119,7 @@ foreach ($line in Get-Content -LiteralPath $checksumPath) {
 Write-Host '[bundle] SHA-256 locaux validés.'
 if ($PlanOnly) {
     Write-Host "[PLAN UNIQUEMENT] Bundle prêt pour $ReleaseName; aucun SSH/SCP exécuté."
-    exit 0
+    return
 }
 
 $remoteUpload = "$($config.VpsIncomingRoot)/$ReleaseName.upload"
@@ -136,9 +151,13 @@ tar -xzf "PropHuntServer-Linux-${build_version}-Runtime.tar.gz" -C "${stage}"
 tar -xzf "PropHuntServer-Ops-${build_version}.tar.gz" -C "${stage}/ops"
 cp "PropHuntServer-${build_version}-manifest.json" SHA256SUMS "${stage}/"
 
-# Les archives sont produites sous Windows : restaurer explicitement les modes
-# attendus par le pré-vol Debian avant de qualifier puis activer la release.
-chmod -R u=rwX,g=rX,o= "${stage}"
+# Les archives sont produites sous Windows : restaurer explicitement le propriétaire
+# et les modes attendus par NOVA avant de qualifier puis activer la release.
+# Le helper refuse volontairement toute release inscriptible par le groupe/le monde,
+# et le worker `uegame` doit pouvoir traverser puis exécuter le package.
+chown -R root:uegame "${stage}"
+find "${stage}" -type d -exec chmod 0750 {} +
+find "${stage}" -type f -exec chmod 0640 {} +
 chmod 0750 \
   "${stage}/PropHuntServer.sh" \
   "${stage}/PropHunt/Binaries/Linux/PropHuntServer-Linux-Shipping" \
@@ -150,12 +169,17 @@ for optional_script in run-prophunt-server.sh audit-prophunt-vps-readonly.sh; do
   fi
 done
 bash "${stage}/ops/preflight-prophunt-server.sh" --package "${stage}" --package-only
+[[ "$(stat -c '%U:%G:%a' "${stage}")" == 'root:uegame:750' ]]
+sudo -u uegame test -x "${stage}/PropHuntServer.sh"
+sudo -u uegame test -x "${stage}/PropHunt/Binaries/Linux/PropHuntServer-Linux-Shipping"
 
 rm -rf -- "${rollback}"
 if [[ -d "${release}" ]]; then
   mv -- "${release}" "${rollback}"
 fi
 mv -- "${stage}" "${release}"
+[[ "$(stat -c '%U:%G:%a' "${release}")" == 'root:uegame:750' ]]
+sudo -u uegame test -x "${release}/PropHuntServer.sh"
 rm -rf -- "${upload}"
 printf '[OK] Release active remplacee: %s\n' "${release}"
 '@

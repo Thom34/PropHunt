@@ -21,6 +21,13 @@ enum class EPHObjectiveInterruptionPolicy : uint8
 
 namespace PHObjectiveFlow
 {
+	inline bool IsStationaryForInteraction(
+		const FVector& Velocity,
+		const float MaximumHorizontalSpeed = 10.0f)
+	{
+		return Velocity.SizeSquared2D() <= FMath::Square(FMath::Max(0.0f, MaximumHorizontalSpeed));
+	}
+
 	inline float GetContributionMultiplier(
 		const int32 InteractorCount,
 		const float AdditionalInteractorContribution)

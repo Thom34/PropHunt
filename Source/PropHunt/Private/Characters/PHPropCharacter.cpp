@@ -256,6 +256,7 @@ void APHPropCharacter::GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& Out
 	DOREPLIFETIME(APHPropCharacter, MementoImpactPoint);
 	DOREPLIFETIME(APHPropCharacter, DownedRecoveryProgress);
 	DOREPLIFETIME(APHPropCharacter, RecoveryHelperCount);
+	DOREPLIFETIME_CONDITION(APHPropCharacter, AssistedDownedProp, COND_OwnerOnly);
 	DOREPLIFETIME(APHPropCharacter, CarryStruggleProgress);
 	DOREPLIFETIME(APHPropCharacter, bUseAlternativeHumanPrototype);
 }
@@ -625,7 +626,10 @@ void APHPropCharacter::RequestCaptureRescue()
 		if (HasAuthority())
 		{
 			StopAssistingDownedTarget();
-			RequestedPoint->ServerTryBeginRelease(*this);
+			if (PrepareHumanFormForSupport(TEXT("retention rescue")))
+			{
+				RequestedPoint->ServerTryBeginRelease(*this);
+			}
 		}
 		else
 		{
@@ -1901,7 +1905,7 @@ void APHPropCharacter::ServerRequestStopExitGateInteraction_Implementation()
 
 void APHPropCharacter::ServerRequestCaptureRescue_Implementation(APHRetentionPoint* RequestedPoint)
 {
-	if (RequestedPoint != nullptr)
+	if (RequestedPoint != nullptr && PrepareHumanFormForSupport(TEXT("retention rescue")))
 	{
 		StopAssistingDownedTarget();
 		RequestedPoint->ServerTryBeginRelease(*this);
@@ -2078,6 +2082,7 @@ void APHPropCharacter::UpdateDownedRecovery(const float DeltaSeconds)
 			if (Helper != nullptr && Helper->AssistedDownedProp == this)
 			{
 				Helper->AssistedDownedProp = nullptr;
+				Helper->ForceNetUpdate();
 			}
 			HelperIterator.RemoveCurrent();
 		}
@@ -3460,8 +3465,10 @@ bool APHPropCharacter::CanAssistDownedTarget(const APHPropCharacter& Target) con
 		&& &Target != this
 		&& HelperState != nullptr
 		&& HelperState->GetPlayerRole() == EPHPlayerRole::Prop
-		&& CanPerformCaptureRescue()
-		&& Target.GetCaptureState() == EPHPropCaptureState::Downed
+		&& PHCaptureFlow::CanStartAllySupport(
+			CaptureState,
+			Target.GetCaptureState(),
+			TransformationState.ActiveForm == nullptr)
 		&& (Phase == EPHMatchPhase::Hunt || Phase == EPHMatchPhase::Escape)
 		&& FVector::DistSquared(GetActorLocation(), Target.GetActorLocation()) <= FMath::Square(SafeDistance)
 		&& HasCaptureLineOfSightTo(Target);
@@ -3490,7 +3497,7 @@ bool APHPropCharacter::HasCaptureLineOfSightTo(const APHPropCharacter& Target) c
 
 void APHPropCharacter::BeginAssistingDownedTarget(APHPropCharacter& Target)
 {
-	if (!CanAssistDownedTarget(Target))
+	if (!PrepareHumanFormForSupport(TEXT("downed ally support")) || !CanAssistDownedTarget(Target))
 	{
 		return;
 	}
@@ -3498,10 +3505,12 @@ void APHPropCharacter::BeginAssistingDownedTarget(APHPropCharacter& Target)
 	StopRetentionRescue();
 	StopAssistingDownedTarget();
 	AssistedDownedProp = &Target;
+	ForceNetUpdate();
 	Target.AddRecoveryHelper(*this);
 	if (!Target.RecoveryHelpers.Contains(this))
 	{
 		AssistedDownedProp = nullptr;
+		ForceNetUpdate();
 	}
 }
 
@@ -3514,6 +3523,7 @@ void APHPropCharacter::StopAssistingDownedTarget()
 
 	APHPropCharacter* PreviousTarget = AssistedDownedProp;
 	AssistedDownedProp = nullptr;
+	ForceNetUpdate();
 	if (PreviousTarget != nullptr)
 	{
 		PreviousTarget->RemoveRecoveryHelper(*this);
@@ -3526,6 +3536,27 @@ void APHPropCharacter::StopRetentionRescue()
 	{
 		ActiveRetentionRescuePoint->ServerEndRelease(*this);
 	}
+}
+
+bool APHPropCharacter::PrepareHumanFormForSupport(const TCHAR* InteractionName)
+{
+	if (!HasAuthority())
+	{
+		return false;
+	}
+	if (TransformationState.ActiveForm == nullptr)
+	{
+		return true;
+	}
+	if (!TryReturnToInitialFormFromServer(InteractionName))
+	{
+		return false;
+	}
+	if (const UWorld* World = GetWorld())
+	{
+		LastServerTransformationRequestTime = World->GetTimeSeconds();
+	}
+	return true;
 }
 
 void APHPropCharacter::AddRecoveryHelper(APHPropCharacter& Helper)
@@ -3568,6 +3599,7 @@ void APHPropCharacter::ClearRecoveryHelpers()
 			Helper != nullptr && Helper->AssistedDownedProp == this)
 		{
 			Helper->AssistedDownedProp = nullptr;
+			Helper->ForceNetUpdate();
 		}
 	}
 	RecoveryHelpers.Reset();

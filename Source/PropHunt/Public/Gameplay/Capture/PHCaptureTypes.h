@@ -59,6 +59,16 @@ namespace PHCaptureFlow
 		return CurrentState == EPHPropCaptureState::Free;
 	}
 
+	inline bool CanStartAllySupport(
+		const EPHPropCaptureState HelperState,
+		const EPHPropCaptureState TargetState,
+		const bool bHelperIsInHumanForm)
+	{
+		return bHelperIsInHumanForm
+			&& (HelperState == EPHPropCaptureState::Free || HelperState == EPHPropCaptureState::Grace)
+			&& TargetState == EPHPropCaptureState::Downed;
+	}
+
 	inline bool ShouldEliminateOnRetention(
 		const int32 NewRetentionCount,
 		const int32 MaximumRetentionCount)

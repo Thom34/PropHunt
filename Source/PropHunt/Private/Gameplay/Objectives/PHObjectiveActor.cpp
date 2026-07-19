@@ -185,7 +185,8 @@ bool APHObjectiveActor::CanPropInteract(const APHPropCharacter& PropCharacter) c
 {
 	const UWorld* World = GetWorld();
 	if (!HasAuthority() || World == nullptr || !bObjectiveActive || bCompleted
-		|| PropCharacter.GetController() == nullptr)
+		|| PropCharacter.GetController() == nullptr
+		|| !PHObjectiveFlow::IsStationaryForInteraction(PropCharacter.GetVelocity()))
 	{
 		return false;
 	}

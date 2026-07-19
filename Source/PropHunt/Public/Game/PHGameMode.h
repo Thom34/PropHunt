@@ -77,6 +77,10 @@ private:
 	UPROPERTY(EditDefaultsOnly, Category = "PropHunt|Players", meta = (AllowPrivateAccess = "true"))
 	TSubclassOf<APHPropCharacter> PropPawnClass;
 
+	/** Time reserved for the final snapshot/RPC to reach clients before worker travel. */
+	UPROPERTY(EditDefaultsOnly, Category = "PropHunt|Results", meta = (ClampMin = "2.0", ClampMax = "15.0", AllowPrivateAccess = "true"))
+	float ResultsDispatchGraceSeconds = 5.0f;
+
 	FTimerHandle PhaseTimerHandle;
 	FTimerHandle LobbyWaitTimerHandle;
 	FTimerHandle RosterTravelWaitTimerHandle;

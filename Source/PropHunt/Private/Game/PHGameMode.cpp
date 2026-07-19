@@ -1400,11 +1400,12 @@ void APHGameMode::ReturnPlayersToLobbyAfterResults()
 		WaitingRoomReturnTimerHandle,
 		this,
 		&APHGameMode::TravelReusableWorkerToWaitingRoom,
-		2.0f,
+		FMath::Clamp(ResultsDispatchGraceSeconds, 2.0f, 15.0f),
 		false);
 	UE_LOG(LogPHMatch, Log,
-		TEXT("Final results ready; dispatched %d player(s) and scheduled the reusable worker return to the waiting room."),
-		Controllers.Num());
+		TEXT("Final results ready; dispatched %d player(s) and scheduled worker return in %.1f seconds."),
+		Controllers.Num(),
+		FMath::Clamp(ResultsDispatchGraceSeconds, 2.0f, 15.0f));
 }
 
 void APHGameMode::TravelReusableWorkerToWaitingRoom()

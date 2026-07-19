@@ -614,6 +614,12 @@ bool FPHCaptureFlowDefaultsTest::RunTest(const FString& Parameters)
 		PHCaptureFlow::CanMeleeHitDown(EPHPropCaptureState::Grace));
 	TestFalse(TEXT("An already downed Prop cannot be downed twice"),
 		PHCaptureFlow::CanMeleeHitDown(EPHPropCaptureState::Downed));
+	TestTrue(TEXT("A human Survivor can assist a downed ally"),
+		PHCaptureFlow::CanStartAllySupport(
+			EPHPropCaptureState::Free, EPHPropCaptureState::Downed, true));
+	TestFalse(TEXT("A transformed Prop must return to human form before assisting an ally"),
+		PHCaptureFlow::CanStartAllySupport(
+			EPHPropCaptureState::Free, EPHPropCaptureState::Downed, false));
 	TestFalse(TEXT("Second retention is not immediate elimination"),
 		PHCaptureFlow::ShouldEliminateOnRetention(2, 3));
 	TestTrue(TEXT("Third retention eliminates in the graybox rule"),
@@ -794,6 +800,10 @@ bool FPHExitGateDefaultsTest::RunTest(const FString& Parameters)
 		GateDefaults->IsWithinInteractionRange(GateDefaults->GetInteractionPoint()));
 	TestFalse(TEXT("Gate is disabled before objectives complete"), GateDefaults->IsGateEnabled());
 	TestFalse(TEXT("Gate is closed before objectives complete"), GateDefaults->IsGateOpen());
+	TestFalse(TEXT("A gate stays closed below a full progress bar"),
+		PHExitGateFlow::HasReachedOpenThreshold(0.99f));
+	TestTrue(TEXT("A gate opens atomically when the progress bar reaches one hundred percent"),
+		PHExitGateFlow::HasReachedOpenThreshold(1.0f));
 	return true;
 }
 
@@ -827,6 +837,10 @@ bool FPHObjectiveDefaultsTest::RunTest(const FString& Parameters)
 		PHObjectiveFlow::ApplyHunterMeleeRegression(0.55f, 0.10f), 0.45f);
 	TestEqual(TEXT("Hunter melee regression cannot go below zero"),
 		PHObjectiveFlow::ApplyHunterMeleeRegression(0.05f, 0.10f), 0.0f);
+	TestTrue(TEXT("A stationary Survivor can maintain an objective interaction"),
+		PHObjectiveFlow::IsStationaryForInteraction(FVector::ZeroVector));
+	TestFalse(TEXT("Moving around an objective interrupts interaction immediately"),
+		PHObjectiveFlow::IsStationaryForInteraction(FVector(25.0f, 0.0f, 0.0f)));
 	return true;
 }
 
@@ -1515,6 +1529,7 @@ bool FPHPostMatchMapsTest::RunTest(const FString& Parameters)
 		int32 SurvivorPreviewMarkers = 0;
 		int32 HunterPreviewMarkers = 0;
 		int32 StageActors = 0;
+		int32 BackdropActors = 0;
 		for (const AActor* Actor : IntroWorld->PersistentLevel->Actors)
 		{
 			if (!IsValid(Actor))
@@ -1525,11 +1540,13 @@ bool FPHPostMatchMapsTest::RunTest(const FString& Parameters)
 			SurvivorPreviewMarkers += Actor->ActorHasTag(TEXT("PHLobbySurvivorPreview")) ? 1 : 0;
 			HunterPreviewMarkers += Actor->ActorHasTag(TEXT("PHLobbyHunterPreview")) ? 1 : 0;
 			StageActors += Actor->ActorHasTag(TEXT("PHLobbyStage")) ? 1 : 0;
+			BackdropActors += Actor->ActorHasTag(TEXT("PHLobbyBackdrop")) ? 1 : 0;
 		}
 		TestTrue(TEXT("P9 lobby has a fixed authored camera"), CameraCount > 0);
 		TestEqual(TEXT("P9 lobby exposes four authored Survivor preview slots"), SurvivorPreviewMarkers, 4);
 		TestEqual(TEXT("P9 lobby exposes one private Hunter preview slot"), HunterPreviewMarkers, 1);
-		TestTrue(TEXT("P9 lobby contains visible authored stage geometry"), StageActors >= 7);
+		TestEqual(TEXT("P9 lobby contains one authored full-screen backdrop"), BackdropActors, 1);
+		TestTrue(TEXT("P9 lobby keeps authored backdrop, fixed exposure and lighting"), StageActors >= 4);
 	}
 	UWorld* WaitingRoomWorld = Cast<UWorld>(WaitingRoomMapPath.TryLoad());
 	TestNotNull(TEXT("Separate dedicated waiting room map exists"), WaitingRoomWorld);

@@ -8,7 +8,6 @@
 #include "Components/VerticalBoxSlot.h"
 #include "Engine/GameInstance.h"
 #include "Game/PHPlayerController.h"
-#include "Kismet/KismetSystemLibrary.h"
 #include "Online/PHSessionSubsystem.h"
 
 namespace
@@ -114,5 +113,15 @@ void UPHInGameMenuWidget::HandleReturnToLobbyClicked()
 
 void UPHInGameMenuWidget::HandleQuitClicked()
 {
-	UKismetSystemLibrary::QuitGame(this, GetOwningPlayer(), EQuitPreference::Quit, false);
+	if (QuitButton != nullptr)
+	{
+		QuitButton->SetIsEnabled(false);
+	}
+	if (UGameInstance* GameInstance = GetGameInstance())
+	{
+		if (UPHSessionSubsystem* SessionSubsystem = GameInstance->GetSubsystem<UPHSessionSubsystem>())
+		{
+			SessionSubsystem->LeaveSessionAndQuitGame();
+		}
+	}
 }

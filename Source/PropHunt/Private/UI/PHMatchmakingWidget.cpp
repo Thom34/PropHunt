@@ -23,10 +23,10 @@
 #include "Engine/Texture2D.h"
 #include "EngineUtils.h"
 #include "Blueprint/WidgetLayoutLibrary.h"
-#include "Kismet/KismetSystemLibrary.h"
 #include "Misc/CommandLine.h"
 #include "Misc/Parse.h"
 #include "Online/PHMatchmakingGatewaySubsystem.h"
+#include "Online/PHSessionSubsystem.h"
 #include "Online/PHSocialInviteSubsystem.h"
 #include "UI/PHSocialFriendButton.h"
 #include "Styling/SlateTypes.h"
@@ -56,6 +56,7 @@ void ApplyRoundedButtonStyle(UButton& Button, const FLinearColor& BaseColor)
 		Brush.DrawAs = ESlateBrushDrawType::RoundedBox;
 		Brush.TintColor = FSlateColor(Color);
 		Brush.OutlineSettings.CornerRadii = FVector4(Radius);
+		Brush.OutlineSettings.RoundingType = ESlateBrushRoundingType::FixedRadius;
 		Brush.OutlineSettings.Color = FSlateColor(FLinearColor(0.42f, 0.49f, 0.58f, 0.55f));
 		Brush.OutlineSettings.Width = 1.0f;
 	};
@@ -77,6 +78,7 @@ void ApplyRoundedBorderStyle(
 	Brush.DrawAs = ESlateBrushDrawType::RoundedBox;
 	Brush.TintColor = FSlateColor(BackgroundColor);
 	Brush.OutlineSettings.CornerRadii = FVector4(Radius);
+	Brush.OutlineSettings.RoundingType = ESlateBrushRoundingType::FixedRadius;
 	Brush.OutlineSettings.Color = FSlateColor(OutlineColor);
 	Brush.OutlineSettings.Width = 1.5f;
 	Border.SetBrush(Brush);
@@ -90,6 +92,7 @@ void ApplyRoundedAvatarBrush(UImage& Image, UTexture2D* Texture)
 	Brush.DrawAs = ESlateBrushDrawType::RoundedBox;
 	Brush.TintColor = FSlateColor(FLinearColor::White);
 	Brush.OutlineSettings.CornerRadii = FVector4(10.0f);
+	Brush.OutlineSettings.RoundingType = ESlateBrushRoundingType::FixedRadius;
 	Brush.OutlineSettings.Color = FSlateColor(FLinearColor(0.18f, 0.78f, 1.0f, 0.72f));
 	Brush.OutlineSettings.Width = 1.0f;
 	Image.SetBrush(Brush);
@@ -135,6 +138,17 @@ bool IsFullLobbyPreviewRequested()
 	return false;
 #else
 	return FParse::Param(FCommandLine::Get(), TEXT("PHPreviewFullLobby"));
+#endif
+}
+
+int32 GetLobbyPreviewSurvivorCount()
+{
+#if UE_BUILD_SHIPPING
+	return 0;
+#else
+	int32 PreviewCount = 4;
+	FParse::Value(FCommandLine::Get(), TEXT("PHPreviewSurvivorCount="), PreviewCount);
+	return FMath::Clamp(PreviewCount, 0, 4);
 #endif
 }
 
@@ -243,13 +257,14 @@ void UPHMatchmakingWidget::NativeOnInitialized()
 	}
 
 	PodiumInviteButtons.Reset();
+	PodiumNameCards.Reset();
+	PodiumNameLabels.Reset();
 	for (int32 SlotIndex = 0; SlotIndex < 4; ++SlotIndex)
 	{
 		UButton* PodiumButton = WidgetTree->ConstructWidget<UButton>(
 			UButton::StaticClass(),
 			*FString::Printf(TEXT("InvitePodiumButton%d"), SlotIndex + 1));
-		PodiumButton->SetBackgroundColor(FLinearColor(0.04f, 0.62f, 0.36f, 0.96f));
-		ApplyRoundedButtonStyle(*PodiumButton, FLinearColor(0.025f, 0.38f, 0.21f, 0.96f));
+		ApplyRoundedButtonStyle(*PodiumButton, FLinearColor(0.012f, 0.075f, 0.11f, 0.94f));
 		PodiumButton->SetVisibility(ESlateVisibility::Collapsed);
 		UTextBlock* PlusLabel = AddButtonLabel(
 			*WidgetTree,
@@ -257,16 +272,42 @@ void UPHMatchmakingWidget::NativeOnInitialized()
 			*FString::Printf(TEXT("InvitePodiumPlus%d"), SlotIndex + 1),
 			TEXT("+"));
 		FSlateFontInfo PlusFont = PlusLabel->GetFont();
-		PlusFont.Size = 32;
+		PlusFont.Size = 25;
 		PlusLabel->SetFont(PlusFont);
+		PlusLabel->SetColorAndOpacity(FSlateColor(FLinearColor(0.34f, 0.88f, 1.0f, 1.0f)));
 		if (UCanvasPanelSlot* PodiumButtonSlot = RootCanvas->AddChildToCanvas(PodiumButton))
 		{
 			PodiumButtonSlot->SetAutoSize(false);
-			PodiumButtonSlot->SetSize(FVector2D(56.0f, 56.0f));
+			PodiumButtonSlot->SetSize(FVector2D(46.0f, 46.0f));
 			PodiumButtonSlot->SetAlignment(FVector2D(0.5f, 0.5f));
+			PodiumButtonSlot->SetZOrder(18);
 		}
 		PodiumButton->OnClicked.AddDynamic(this, &UPHMatchmakingWidget::HandleInviteFriendClicked);
 		PodiumInviteButtons.Add(PodiumButton);
+
+		UBorder* NameCard = WidgetTree->ConstructWidget<UBorder>(
+			UBorder::StaticClass(), *FString::Printf(TEXT("PodiumNameCard%d"), SlotIndex + 1));
+		ApplyRoundedBorderStyle(
+			*NameCard,
+			FLinearColor(0.006f, 0.018f, 0.03f, 0.88f),
+			FLinearColor(0.18f, 0.70f, 0.88f, 0.68f),
+			8.0f);
+		NameCard->SetPadding(FMargin(10.0f, 5.0f));
+		NameCard->SetVisibility(ESlateVisibility::Collapsed);
+		UTextBlock* NameLabel = WidgetTree->ConstructWidget<UTextBlock>(
+			UTextBlock::StaticClass(), *FString::Printf(TEXT("PodiumNameLabel%d"), SlotIndex + 1));
+		NameLabel->SetJustification(ETextJustify::Center);
+		NameLabel->SetColorAndOpacity(FSlateColor(FLinearColor(0.91f, 0.96f, 1.0f, 1.0f)));
+		NameLabel->SetFont(FSlateFontInfo(NameLabel->GetFont().FontObject, 12));
+		NameCard->SetContent(NameLabel);
+		if (UCanvasPanelSlot* NameCardSlot = RootCanvas->AddChildToCanvas(NameCard))
+		{
+			NameCardSlot->SetSize(FVector2D(172.0f, 34.0f));
+			NameCardSlot->SetAlignment(FVector2D(0.5f, 0.0f));
+			NameCardSlot->SetZOrder(17);
+		}
+		PodiumNameCards.Add(NameCard);
+		PodiumNameLabels.Add(NameLabel);
 	}
 
 	MainMenuPanel = WidgetTree->ConstructWidget<UBorder>(
@@ -427,13 +468,20 @@ void UPHMatchmakingWidget::NativeOnInitialized()
 
 	LobbyPanel = WidgetTree->ConstructWidget<UBorder>(
 		UBorder::StaticClass(), TEXT("MatchmakingLobbyPanel"));
-	LobbyPanel->SetBrushColor(FLinearColor(0.025f, 0.055f, 0.085f, 0.98f));
-	LobbyPanel->SetPadding(FMargin(28.0f, 22.0f));
+	ApplyRoundedBorderStyle(
+		*LobbyPanel,
+		FLinearColor(0.004f, 0.014f, 0.026f, 0.88f),
+		FLinearColor(0.17f, 0.66f, 0.86f, 0.58f),
+		4.0f);
+	LobbyPanel->SetPadding(FMargin(18.0f, 12.0f));
 	LobbyPanel->SetVisibility(ESlateVisibility::Collapsed);
-	if (UVerticalBoxSlot* LobbyPanelSlot = Menu->AddChildToVerticalBox(LobbyPanel))
+	if (UCanvasPanelSlot* LobbyPanelSlot = RootCanvas->AddChildToCanvas(LobbyPanel))
 	{
-		LobbyPanelSlot->SetPadding(FMargin(0.0f, 0.0f, 0.0f, 18.0f));
-		LobbyPanelSlot->SetHorizontalAlignment(HAlign_Fill);
+		LobbyPanelSlot->SetAnchors(FAnchors(0.5f, 0.0f));
+		LobbyPanelSlot->SetAlignment(FVector2D(0.5f, 0.0f));
+		LobbyPanelSlot->SetPosition(FVector2D(0.0f, 214.0f));
+		LobbyPanelSlot->SetSize(FVector2D(420.0f, 82.0f));
+		LobbyPanelSlot->SetZOrder(16);
 	}
 	UVerticalBox* LobbyContent = WidgetTree->ConstructWidget<UVerticalBox>(
 		UVerticalBox::StaticClass(), TEXT("MatchmakingLobbyContent"));
@@ -456,21 +504,65 @@ void UPHMatchmakingWidget::NativeOnInitialized()
 		return Label;
 	};
 	LobbyTitleLabel = AddLobbyLabel(
-		TEXT("MatchmakingLobbyTitle"), TEXT("SALON D'ATTENTE"), 28,
-		FLinearColor(0.95f, 0.72f, 0.12f, 1.0f));
-	LobbyRoleLabel = AddLobbyLabel(
-		TEXT("MatchmakingLobbyRole"), TEXT("ROLE"), 17, FLinearColor::White);
-	LobbyCountdownLabel = AddLobbyLabel(
-		TEXT("MatchmakingLobbyCountdown"), TEXT("EN ATTENTE"), 20,
+		TEXT("MatchmakingLobbyTitle"), TEXT("ÉQUIPE"), 9,
+		FLinearColor(0.42f, 0.78f, 0.92f, 1.0f));
+	LobbyTitleLabel->SetVisibility(ESlateVisibility::Collapsed);
+	LobbyRosterCountLabel = AddLobbyLabel(
+		TEXT("MatchmakingLobbyRosterCount"), TEXT("EN ATTENTE"), 18,
 		FLinearColor(0.45f, 0.82f, 1.0f, 1.0f));
-	SurvivorSlotLabels.Reset();
+	LobbyRoleLabel = AddLobbyLabel(
+		TEXT("MatchmakingLobbyRole"), TEXT("0 / 4 SURVIVANTS"), 12, FLinearColor::White);
+	LobbyCountdownLabel = AddLobbyLabel(
+		TEXT("MatchmakingLobbyCountdown"), TEXT("EN ATTENTE"), 12,
+		FLinearColor(0.45f, 0.82f, 1.0f, 1.0f));
+	LobbyCountdownLabel->SetVisibility(ESlateVisibility::Collapsed);
+
+	UHorizontalBox* ReadyIcons = WidgetTree->ConstructWidget<UHorizontalBox>(
+		UHorizontalBox::StaticClass(), TEXT("MatchmakingLobbyReadyIcons"));
+	if (UCanvasPanelSlot* ReadyIconsSlot = RootCanvas->AddChildToCanvas(ReadyIcons))
+	{
+		ReadyIconsSlot->SetAnchors(FAnchors(0.0f, 1.0f));
+		ReadyIconsSlot->SetAlignment(FVector2D(0.0f, 1.0f));
+		ReadyIconsSlot->SetPosition(FVector2D(24.0f, -150.0f));
+		ReadyIconsSlot->SetSize(FVector2D(600.0f, 128.0f));
+		ReadyIconsSlot->SetZOrder(20);
+	}
+	LobbySurvivorReadyIcons.Reset();
 	for (int32 SlotIndex = 0; SlotIndex < 4; ++SlotIndex)
 	{
-		SurvivorSlotLabels.Add(AddLobbyLabel(
-			*FString::Printf(TEXT("MatchmakingSurvivorSlot%d"), SlotIndex + 1),
-			FString::Printf(TEXT("SURVIVANT %d  —  EN ATTENTE"), SlotIndex + 1),
-			16,
-			FLinearColor(0.48f, 0.55f, 0.64f, 1.0f)));
+		UImage* SurvivorIcon = WidgetTree->ConstructWidget<UImage>(
+			UImage::StaticClass(), *FString::Printf(TEXT("LobbySurvivorReadyIcon%d"), SlotIndex + 1));
+		FSlateBrush SurvivorReadyBrush;
+		SurvivorReadyBrush.SetResourceObject(SurvivorRoleIcon);
+		SurvivorReadyBrush.DrawAs = ESlateBrushDrawType::Image;
+		SurvivorReadyBrush.ImageSize = FVector2D(96.0f, 96.0f);
+		SurvivorReadyBrush.SetUVRegion(FBox2f(FVector2f(0.32f, 0.32f), FVector2f(0.68f, 0.68f)));
+		SurvivorIcon->SetBrush(SurvivorReadyBrush);
+		SurvivorIcon->SetDesiredSizeOverride(FVector2D(96.0f, 96.0f));
+		SurvivorIcon->SetColorAndOpacity(FLinearColor(0.40f, 0.86f, 1.0f, 1.0f));
+		SurvivorIcon->SetVisibility(ESlateVisibility::Collapsed);
+		if (UHorizontalBoxSlot* SurvivorIconSlot = ReadyIcons->AddChildToHorizontalBox(SurvivorIcon))
+		{
+			SurvivorIconSlot->SetPadding(FMargin(3.0f, 0.0f));
+			SurvivorIconSlot->SetVerticalAlignment(VAlign_Center);
+		}
+		LobbySurvivorReadyIcons.Add(SurvivorIcon);
+	}
+	LobbyHunterReadyIcon = WidgetTree->ConstructWidget<UImage>(
+		UImage::StaticClass(), TEXT("LobbyHunterReadyIcon"));
+	FSlateBrush HunterReadyBrush;
+	HunterReadyBrush.SetResourceObject(KillerRoleIcon);
+	HunterReadyBrush.DrawAs = ESlateBrushDrawType::Image;
+	HunterReadyBrush.ImageSize = FVector2D(108.0f, 108.0f);
+	HunterReadyBrush.SetUVRegion(FBox2f(FVector2f(0.32f, 0.32f), FVector2f(0.68f, 0.68f)));
+	LobbyHunterReadyIcon->SetBrush(HunterReadyBrush);
+	LobbyHunterReadyIcon->SetDesiredSizeOverride(FVector2D(108.0f, 108.0f));
+	LobbyHunterReadyIcon->SetColorAndOpacity(FLinearColor(1.0f, 0.30f, 0.22f, 1.0f));
+	LobbyHunterReadyIcon->SetVisibility(ESlateVisibility::Collapsed);
+	if (UHorizontalBoxSlot* HunterReadySlot = ReadyIcons->AddChildToHorizontalBox(LobbyHunterReadyIcon))
+	{
+		HunterReadySlot->SetPadding(FMargin(16.0f, 0.0f, 2.0f, 0.0f));
+		HunterReadySlot->SetVerticalAlignment(VAlign_Center);
 	}
 
 	HunterPreviewCard = WidgetTree->ConstructWidget<UBorder>(
@@ -493,9 +585,9 @@ void UPHMatchmakingWidget::NativeOnInitialized()
 		HunterPreviewSlot->SetHorizontalAlignment(HAlign_Right);
 	}
 
-	UVerticalBox* RoleActions = WidgetTree->ConstructWidget<UVerticalBox>(
+	RoleActionsPanel = WidgetTree->ConstructWidget<UVerticalBox>(
 		UVerticalBox::StaticClass(), TEXT("MatchmakingRoleActions"));
-	if (UVerticalBoxSlot* RoleActionsSlot = Menu->AddChildToVerticalBox(RoleActions))
+	if (UVerticalBoxSlot* RoleActionsSlot = Menu->AddChildToVerticalBox(RoleActionsPanel))
 	{
 		RoleActionsSlot->SetPadding(FMargin(0.0f, 10.0f));
 		RoleActionsSlot->SetHorizontalAlignment(HAlign_Center);
@@ -505,7 +597,7 @@ void UPHMatchmakingWidget::NativeOnInitialized()
 		UButton::StaticClass(), TEXT("PropTicketButton"));
 	ApplyRoundedButtonStyle(*FindButton, FLinearColor(0.025f, 0.14f, 0.24f, 0.98f));
 	AddButtonIcon(*WidgetTree, *FindButton, TEXT("PropTicketIcon"), SurvivorRoleIcon);
-	if (UVerticalBoxSlot* FindButtonSlot = RoleActions->AddChildToVerticalBox(FindButton))
+	if (UVerticalBoxSlot* FindButtonSlot = RoleActionsPanel->AddChildToVerticalBox(FindButton))
 	{
 		FindButtonSlot->SetPadding(FMargin(0.0f, 0.0f, 0.0f, 3.0f));
 		FindButtonSlot->SetHorizontalAlignment(HAlign_Center);
@@ -515,7 +607,7 @@ void UPHMatchmakingWidget::NativeOnInitialized()
 		UButton::StaticClass(), TEXT("HunterTicketButton"));
 	ApplyRoundedButtonStyle(*HostButton, FLinearColor(0.24f, 0.025f, 0.02f, 0.98f));
 	AddButtonIcon(*WidgetTree, *HostButton, TEXT("HunterTicketIcon"), KillerRoleIcon);
-	if (UVerticalBoxSlot* HostButtonSlot = RoleActions->AddChildToVerticalBox(HostButton))
+	if (UVerticalBoxSlot* HostButtonSlot = RoleActionsPanel->AddChildToVerticalBox(HostButton))
 	{
 		HostButtonSlot->SetPadding(FMargin(0.0f, 3.0f));
 		HostButtonSlot->SetHorizontalAlignment(HAlign_Center);
@@ -525,7 +617,7 @@ void UPHMatchmakingWidget::NativeOnInitialized()
 		UButton::StaticClass(), TEXT("FindRandomRoleButton"));
 	ApplyRoundedButtonStyle(*RandomButton, FLinearColor(0.18f, 0.055f, 0.30f, 0.98f));
 	AddButtonIcon(*WidgetTree, *RandomButton, TEXT("FindRandomRoleIcon"), RandomRoleIcon);
-	if (UVerticalBoxSlot* RandomButtonSlot = RoleActions->AddChildToVerticalBox(RandomButton))
+	if (UVerticalBoxSlot* RandomButtonSlot = RoleActionsPanel->AddChildToVerticalBox(RandomButton))
 	{
 		RandomButtonSlot->SetPadding(FMargin(0.0f, 3.0f));
 		RandomButtonSlot->SetHorizontalAlignment(HAlign_Center);
@@ -535,7 +627,7 @@ void UPHMatchmakingWidget::NativeOnInitialized()
 		UButton::StaticClass(), TEXT("CustomizationButton"));
 	ApplyRoundedButtonStyle(*CustomizationButton, FLinearColor(0.035f, 0.16f, 0.17f, 0.98f));
 	AddButtonIcon(*WidgetTree, *CustomizationButton, TEXT("CustomizationIcon"), CustomizationIcon);
-	if (UVerticalBoxSlot* CustomizationButtonSlot = RoleActions->AddChildToVerticalBox(CustomizationButton))
+	if (UVerticalBoxSlot* CustomizationButtonSlot = RoleActionsPanel->AddChildToVerticalBox(CustomizationButton))
 	{
 		CustomizationButtonSlot->SetPadding(FMargin(0.0f, 3.0f));
 		CustomizationButtonSlot->SetHorizontalAlignment(HAlign_Center);
@@ -543,32 +635,65 @@ void UPHMatchmakingWidget::NativeOnInitialized()
 
 	QuitButton = WidgetTree->ConstructWidget<UButton>(
 		UButton::StaticClass(), TEXT("QuitMatchmakingButton"));
-	ApplyRoundedButtonStyle(*QuitButton, FLinearColor(0.20f, 0.105f, 0.025f, 0.98f));
-	AddButtonIcon(*WidgetTree, *QuitButton, TEXT("QuitMatchmakingIcon"), QuitIcon);
-	if (UVerticalBoxSlot* QuitButtonSlot = RoleActions->AddChildToVerticalBox(QuitButton))
+	ApplyRoundedButtonStyle(*QuitButton, FLinearColor(0.055f, 0.035f, 0.025f, 0.90f));
+	UHorizontalBox* QuitContent = WidgetTree->ConstructWidget<UHorizontalBox>(
+		UHorizontalBox::StaticClass(), TEXT("QuitMatchmakingContent"));
+	QuitButton->AddChild(QuitContent);
+	if (UButtonSlot* QuitContentSlot = Cast<UButtonSlot>(QuitContent->Slot))
 	{
-		QuitButtonSlot->SetPadding(FMargin(0.0f, 3.0f, 0.0f, 0.0f));
-		QuitButtonSlot->SetHorizontalAlignment(HAlign_Center);
+		QuitContentSlot->SetHorizontalAlignment(HAlign_Center);
+		QuitContentSlot->SetVerticalAlignment(VAlign_Center);
+	}
+	UImage* QuitImage = WidgetTree->ConstructWidget<UImage>(
+		UImage::StaticClass(), TEXT("QuitMatchmakingIcon"));
+	QuitImage->SetBrushFromTexture(QuitIcon, false);
+	QuitImage->SetDesiredSizeOverride(FVector2D(27.0f, 27.0f));
+	if (UHorizontalBoxSlot* QuitImageSlot = QuitContent->AddChildToHorizontalBox(QuitImage))
+	{
+		QuitImageSlot->SetPadding(FMargin(8.0f, 7.0f, 7.0f, 7.0f));
+		QuitImageSlot->SetVerticalAlignment(VAlign_Center);
+	}
+	UTextBlock* QuitLabel = WidgetTree->ConstructWidget<UTextBlock>(
+		UTextBlock::StaticClass(), TEXT("QuitMatchmakingLabel"));
+	QuitLabel->SetText(FText::FromString(TEXT("QUITTER LE JEU")));
+	QuitLabel->SetJustification(ETextJustify::Center);
+	QuitLabel->SetColorAndOpacity(FSlateColor(FLinearColor(0.88f, 0.78f, 0.68f, 1.0f)));
+	QuitLabel->SetFont(FSlateFontInfo(QuitLabel->GetFont().FontObject, 11));
+	if (UHorizontalBoxSlot* QuitLabelSlot = QuitContent->AddChildToHorizontalBox(QuitLabel))
+	{
+		QuitLabelSlot->SetPadding(FMargin(0.0f, 0.0f, 8.0f, 0.0f));
+		QuitLabelSlot->SetVerticalAlignment(VAlign_Center);
+	}
+	if (UCanvasPanelSlot* QuitButtonSlot = RootCanvas->AddChildToCanvas(QuitButton))
+	{
+		QuitButtonSlot->SetAnchors(FAnchors(0.0f, 1.0f));
+		QuitButtonSlot->SetAlignment(FVector2D(0.0f, 1.0f));
+		QuitButtonSlot->SetPosition(FVector2D(24.0f, -24.0f));
+		QuitButtonSlot->SetSize(FVector2D(184.0f, 46.0f));
+		QuitButtonSlot->SetZOrder(20);
 	}
 
 	CancelButton = WidgetTree->ConstructWidget<UButton>(
 		UButton::StaticClass(), TEXT("CancelMatchmakingButton"));
 	ApplyRoundedButtonStyle(*CancelButton, FLinearColor(0.34f, 0.035f, 0.025f, 0.98f));
 	UTextBlock* CancelLabel = AddButtonLabel(
-		*WidgetTree, *CancelButton, TEXT("CancelMatchmakingLabel"), TEXT("X"));
-	CancelLabel->SetFont(FSlateFontInfo(CancelLabel->GetFont().FontObject, 28));
+		*WidgetTree, *CancelButton, TEXT("CancelMatchmakingLabel"), TEXT("‹   RETOUR AU MENU"));
+	CancelLabel->SetFont(FSlateFontInfo(CancelLabel->GetFont().FontObject, 13));
 	CancelLabel->SetColorAndOpacity(FSlateColor(FLinearColor(1.0f, 0.34f, 0.24f, 1.0f)));
 	if (UButtonSlot* CancelContentSlot = Cast<UButtonSlot>(CancelLabel->Slot))
 	{
-		CancelContentSlot->SetPadding(FMargin(17.0f, 10.0f));
+		CancelContentSlot->SetPadding(FMargin(18.0f, 12.0f));
 		CancelContentSlot->SetHorizontalAlignment(HAlign_Center);
 		CancelContentSlot->SetVerticalAlignment(VAlign_Center);
 	}
 	CancelButton->SetVisibility(ESlateVisibility::Collapsed);
-	if (UVerticalBoxSlot* CancelButtonSlot = Menu->AddChildToVerticalBox(CancelButton))
+	if (UCanvasPanelSlot* CancelButtonSlot = RootCanvas->AddChildToCanvas(CancelButton))
 	{
-		CancelButtonSlot->SetPadding(FMargin(0.0f, 12.0f, 0.0f, 8.0f));
-		CancelButtonSlot->SetHorizontalAlignment(HAlign_Center);
+		CancelButtonSlot->SetAnchors(FAnchors(1.0f, 1.0f));
+		CancelButtonSlot->SetAlignment(FVector2D(1.0f, 1.0f));
+		CancelButtonSlot->SetPosition(FVector2D(-24.0f, -24.0f));
+		CancelButtonSlot->SetSize(FVector2D(196.0f, 46.0f));
+		CancelButtonSlot->SetZOrder(20);
 	}
 
 	StatusLabel = WidgetTree->ConstructWidget<UTextBlock>(
@@ -614,17 +739,17 @@ void UPHMatchmakingWidget::NativeOnInitialized()
 		UBorder::StaticClass(), TEXT("SocialFriendsSidePanel"));
 	ApplyRoundedBorderStyle(
 		*FriendsPanel,
-		FLinearColor(0.008f, 0.016f, 0.029f, 0.985f),
-		FLinearColor(0.13f, 0.48f, 0.66f, 0.82f),
-		14.0f);
-	FriendsPanel->SetPadding(FMargin(22.0f));
+		FLinearColor(0.004f, 0.012f, 0.022f, 0.90f),
+		FLinearColor(0.16f, 0.58f, 0.76f, 0.52f),
+		4.0f);
+	FriendsPanel->SetPadding(FMargin(14.0f));
 	FriendsPanel->SetVisibility(ESlateVisibility::Collapsed);
 	if (UCanvasPanelSlot* FriendsPanelSlot = RootCanvas->AddChildToCanvas(FriendsPanel))
 	{
 		FriendsPanelSlot->SetAnchors(FAnchors(0.0f, 0.5f));
 		FriendsPanelSlot->SetAlignment(FVector2D(0.0f, 0.5f));
-		FriendsPanelSlot->SetPosition(FVector2D(24.0f, 24.0f));
-		FriendsPanelSlot->SetSize(FVector2D(380.0f, 720.0f));
+		FriendsPanelSlot->SetPosition(FVector2D(24.0f, 0.0f));
+		FriendsPanelSlot->SetSize(FVector2D(350.0f, 620.0f));
 		FriendsPanelSlot->SetZOrder(21);
 	}
 
@@ -641,10 +766,10 @@ void UPHMatchmakingWidget::NativeOnInitialized()
 
 	UTextBlock* FriendsTitle = WidgetTree->ConstructWidget<UTextBlock>(
 		UTextBlock::StaticClass(), TEXT("SocialFriendsTitle"));
-	FriendsTitle->SetText(FText::FromString(TEXT("AMIS STEAM")));
+	FriendsTitle->SetText(FText::FromString(TEXT("INVITER UN AMI")));
 	FriendsTitle->SetJustification(ETextJustify::Left);
 	FriendsTitle->SetColorAndOpacity(FSlateColor(FLinearColor(0.93f, 0.78f, 0.36f, 1.0f)));
-	FriendsTitle->SetFont(FSlateFontInfo(FriendsTitle->GetFont().FontObject, 24));
+	FriendsTitle->SetFont(FSlateFontInfo(FriendsTitle->GetFont().FontObject, 19));
 	if (UHorizontalBoxSlot* TitleSlot = FriendsHeader->AddChildToHorizontalBox(FriendsTitle))
 	{
 		TitleSlot->SetSize(FSlateChildSize(ESlateSizeRule::Fill));
@@ -669,7 +794,7 @@ void UPHMatchmakingWidget::NativeOnInitialized()
 	FriendsStatusLabel->SetJustification(ETextJustify::Left);
 	FriendsStatusLabel->SetAutoWrapText(true);
 	FriendsStatusLabel->SetColorAndOpacity(FSlateColor(FLinearColor(0.48f, 0.58f, 0.68f, 1.0f)));
-	FriendsStatusLabel->SetFont(FSlateFontInfo(FriendsStatusLabel->GetFont().FontObject, 12));
+	FriendsStatusLabel->SetFont(FSlateFontInfo(FriendsStatusLabel->GetFont().FontObject, 11));
 	if (UVerticalBoxSlot* FriendsStatusSlot = FriendsContent->AddChildToVerticalBox(FriendsStatusLabel))
 	{
 		FriendsStatusSlot->SetPadding(FMargin(2.0f, 0.0f, 0.0f, 12.0f));
@@ -679,8 +804,8 @@ void UPHMatchmakingWidget::NativeOnInitialized()
 		UButton::StaticClass(), TEXT("RefreshSteamFriendsButton"));
 	ApplyRoundedButtonStyle(*RefreshFriendsButton, FLinearColor(0.035f, 0.075f, 0.115f, 1.0f));
 	UTextBlock* RefreshLabel = AddButtonLabel(
-		*WidgetTree, *RefreshFriendsButton, TEXT("RefreshSteamFriendsLabel"), TEXT("ACTUALISER LA LISTE"));
-	RefreshLabel->SetFont(FSlateFontInfo(RefreshLabel->GetFont().FontObject, 12));
+		*WidgetTree, *RefreshFriendsButton, TEXT("RefreshSteamFriendsLabel"), TEXT("ACTUALISER"));
+	RefreshLabel->SetFont(FSlateFontInfo(RefreshLabel->GetFont().FontObject, 11));
 	RefreshLabel->SetColorAndOpacity(FSlateColor(FLinearColor(0.60f, 0.72f, 0.82f, 1.0f)));
 	if (UVerticalBoxSlot* RefreshSlot = FriendsContent->AddChildToVerticalBox(RefreshFriendsButton))
 	{
@@ -690,6 +815,9 @@ void UPHMatchmakingWidget::NativeOnInitialized()
 	FriendsList = WidgetTree->ConstructWidget<UScrollBox>(
 		UScrollBox::StaticClass(), TEXT("SteamFriendsList"));
 	FriendsList->SetScrollBarVisibility(ESlateVisibility::Visible);
+	// Keep the invite row safely separated from the scrollbar so a scroll gesture
+	// cannot accidentally land on the friend's clickable entry.
+	FriendsList->SetScrollbarPadding(FMargin(12.0f, 0.0f, 0.0f, 0.0f));
 	if (UVerticalBoxSlot* ListSlot = FriendsContent->AddChildToVerticalBox(FriendsList))
 	{
 		ListSlot->SetSize(FSlateChildSize(ESlateSizeRule::Fill));
@@ -750,7 +878,7 @@ void UPHMatchmakingWidget::NativeConstruct()
 	}
 	if (IsCancelButtonPreviewRequested())
 	{
-		SetButtonsEnabled(false, true);
+		SetButtonsEnabled(false, true, true);
 	}
 
 	if (APlayerController* PlayerController = GetOwningPlayer())
@@ -794,10 +922,29 @@ void UPHMatchmakingWidget::NativeTick(const FGeometry& MyGeometry, const float I
 			const FVector2D ButtonRightCenter = ButtonGeometry.LocalToAbsolute(FVector2D(
 				ButtonGeometry.GetLocalSize().X,
 				ButtonGeometry.GetLocalSize().Y * 0.5f));
+			const FVector2D ButtonLeftCenter = ButtonGeometry.LocalToAbsolute(FVector2D(
+				0.0f,
+				ButtonGeometry.GetLocalSize().Y * 0.5f));
 			if (UCanvasPanelSlot* TooltipSlot = Cast<UCanvasPanelSlot>(RoleTooltipCard->Slot))
 			{
-				TooltipSlot->SetPosition(
-					RootGeometry.AbsoluteToLocal(ButtonRightCenter) + FVector2D(18.0f, 0.0f));
+				const FVector2D RightAnchor = RootGeometry.AbsoluteToLocal(ButtonRightCenter);
+				const FVector2D LeftAnchor = RootGeometry.AbsoluteToLocal(ButtonLeftCenter);
+				constexpr float TooltipWidth = 350.0f;
+				const bool bPlaceOnLeft = RightAnchor.X + 18.0f + TooltipWidth
+					> RootGeometry.GetLocalSize().X - 16.0f;
+				FVector2D TooltipPosition = bPlaceOnLeft
+					? LeftAnchor - FVector2D(18.0f, 0.0f)
+					: RightAnchor + FVector2D(18.0f, 0.0f);
+				TooltipSlot->SetAlignment(FVector2D(bPlaceOnLeft ? 1.0f : 0.0f, 0.5f));
+				constexpr float TooltipHalfHeight = 69.0f;
+				constexpr float TooltipScreenMargin = 16.0f;
+				TooltipPosition.Y = FMath::Clamp(
+					TooltipPosition.Y,
+					TooltipHalfHeight + TooltipScreenMargin,
+					FMath::Max(
+						TooltipHalfHeight + TooltipScreenMargin,
+						RootGeometry.GetLocalSize().Y - TooltipHalfHeight - TooltipScreenMargin));
+				TooltipSlot->SetPosition(TooltipPosition);
 			}
 		}
 		if (RoleTooltipTargetOpacity > 0.0f && RoleTooltipCard->GetVisibility() == ESlateVisibility::Collapsed)
@@ -899,8 +1046,8 @@ void UPHMatchmakingWidget::HandleCancelTooltipHovered()
 	ShowRoleTooltip(
 		CancelButton,
 		nullptr,
-		TEXT("QUITTER LA FILE"),
-		TEXT("Quitter la file d'attente et annuler la recherche en cours."),
+		TEXT("RETOUR AU MENU"),
+		TEXT("Annule la recherche en cours et retourne au choix du rôle."),
 		FLinearColor(1.0f, 0.28f, 0.18f, 1.0f));
 }
 
@@ -1139,8 +1286,8 @@ void UPHMatchmakingWidget::RebuildFriendsList()
 			UPHSocialFriendButton::StaticClass(),
 			*FString::Printf(TEXT("SteamFriendInvite%d"), Index));
 		ApplyRoundedButtonStyle(*FriendButton, Entry.bPlayingPropHunt
-			? FLinearColor(0.035f, 0.19f, 0.14f, 0.98f)
-			: FLinearColor(0.018f, 0.055f, 0.086f, 0.98f));
+			? FLinearColor(0.025f, 0.15f, 0.12f, 0.82f)
+			: FLinearColor(0.012f, 0.045f, 0.072f, 0.76f));
 		FriendButton->InitializeFriend(Entry.UserId);
 		FriendButton->SetIsEnabled(!bInvitePending && CooldownSecondsRemaining == 0);
 		FriendButton->OnInviteRequested.AddDynamic(
@@ -1157,8 +1304,8 @@ void UPHMatchmakingWidget::RebuildFriendsList()
 
 		USizeBox* AvatarSize = WidgetTree->ConstructWidget<USizeBox>(
 			USizeBox::StaticClass(), *FString::Printf(TEXT("SteamFriendAvatarSize%d"), Index));
-		AvatarSize->SetWidthOverride(38.0f);
-		AvatarSize->SetHeightOverride(38.0f);
+		AvatarSize->SetWidthOverride(36.0f);
+		AvatarSize->SetHeightOverride(36.0f);
 		UBorder* Avatar = WidgetTree->ConstructWidget<UBorder>(
 			UBorder::StaticClass(), *FString::Printf(TEXT("SteamFriendAvatar%d"), Index));
 		ApplyRoundedBorderStyle(
@@ -1174,7 +1321,14 @@ void UPHMatchmakingWidget::RebuildFriendsList()
 		{
 			UImage* AvatarImage = WidgetTree->ConstructWidget<UImage>(
 				UImage::StaticClass(), *FString::Printf(TEXT("SteamFriendAvatarImage%d"), Index));
-			AvatarImage->SetBrushFromTexture(Entry.AvatarTexture, true);
+			FSlateBrush AvatarBrush;
+			AvatarBrush.SetResourceObject(Entry.AvatarTexture);
+			AvatarBrush.ImageSize = FVector2D(36.0f, 36.0f);
+			AvatarBrush.DrawAs = ESlateBrushDrawType::RoundedBox;
+			AvatarBrush.TintColor = FSlateColor(FLinearColor::White);
+			AvatarBrush.OutlineSettings.CornerRadii = FVector4(7.0f);
+			AvatarBrush.OutlineSettings.RoundingType = ESlateBrushRoundingType::FixedRadius;
+			AvatarImage->SetBrush(AvatarBrush);
 			Avatar->SetContent(AvatarImage);
 		}
 		else
@@ -1191,7 +1345,7 @@ void UPHMatchmakingWidget::RebuildFriendsList()
 		AvatarSize->SetContent(Avatar);
 		if (UHorizontalBoxSlot* AvatarSlot = Row->AddChildToHorizontalBox(AvatarSize))
 		{
-			AvatarSlot->SetPadding(FMargin(8.0f, 7.0f, 10.0f, 7.0f));
+			AvatarSlot->SetPadding(FMargin(8.0f, 6.0f, 10.0f, 6.0f));
 			AvatarSlot->SetVerticalAlignment(VAlign_Center);
 		}
 
@@ -1199,8 +1353,8 @@ void UPHMatchmakingWidget::RebuildFriendsList()
 			UVerticalBox::StaticClass(), *FString::Printf(TEXT("SteamFriendIdentity%d"), Index));
 		UTextBlock* DisplayName = WidgetTree->ConstructWidget<UTextBlock>(
 			UTextBlock::StaticClass(), *FString::Printf(TEXT("SteamFriendName%d"), Index));
-		const FString CompactDisplayName = Entry.DisplayName.Len() > 17
-			? Entry.DisplayName.Left(14) + TEXT("...")
+		const FString CompactDisplayName = Entry.DisplayName.Len() > 18
+			? Entry.DisplayName.Left(15) + TEXT("...")
 			: Entry.DisplayName;
 		DisplayName->SetText(FText::FromString(CompactDisplayName));
 		DisplayName->SetColorAndOpacity(FSlateColor(FLinearColor(0.91f, 0.94f, 0.97f, 1.0f)));
@@ -1235,28 +1389,49 @@ void UPHMatchmakingWidget::RebuildFriendsList()
 				: FLinearColor(0.94f, 0.76f, 0.32f, 1.0f)));
 		InviteLabel->SetFont(FSlateFontInfo(
 			InviteLabel->GetFont().FontObject,
-			CooldownSecondsRemaining > 0 ? 11 : 24));
-		if (UHorizontalBoxSlot* InviteSlot = Row->AddChildToHorizontalBox(InviteLabel))
+			CooldownSecondsRemaining > 0 ? 10 : 21));
+		UBorder* InviteBubble = WidgetTree->ConstructWidget<UBorder>(
+			UBorder::StaticClass(), *FString::Printf(TEXT("SteamFriendInviteBubble%d"), Index));
+		ApplyRoundedBorderStyle(
+			*InviteBubble,
+			bInvitePending || CooldownSecondsRemaining > 0
+				? FLinearColor(0.04f, 0.05f, 0.065f, 0.74f)
+				: FLinearColor(0.04f, 0.15f, 0.18f, 0.82f),
+			bInvitePending || CooldownSecondsRemaining > 0
+				? FLinearColor(0.24f, 0.28f, 0.34f, 0.55f)
+				: FLinearColor(0.24f, 0.82f, 0.94f, 0.72f),
+			8.0f);
+		InviteBubble->SetPadding(FMargin(8.0f, 2.0f));
+		InviteBubble->SetContent(InviteLabel);
+		USizeBox* InviteBubbleSize = WidgetTree->ConstructWidget<USizeBox>(
+			USizeBox::StaticClass(), *FString::Printf(TEXT("SteamFriendInviteBubbleSize%d"), Index));
+		InviteBubbleSize->SetWidthOverride(38.0f);
+		InviteBubbleSize->SetHeightOverride(32.0f);
+		InviteBubbleSize->SetContent(InviteBubble);
+		if (UHorizontalBoxSlot* InviteSlot = Row->AddChildToHorizontalBox(InviteBubbleSize))
 		{
-			InviteSlot->SetPadding(FMargin(10.0f, 0.0f, 12.0f, 0.0f));
+			InviteSlot->SetPadding(FMargin(8.0f, 0.0f, 8.0f, 0.0f));
 			InviteSlot->SetVerticalAlignment(VAlign_Center);
 		}
 
 		USizeBox* RowSize = WidgetTree->ConstructWidget<USizeBox>(
 			USizeBox::StaticClass(), *FString::Printf(TEXT("SteamFriendRowSize%d"), Index));
-		RowSize->SetHeightOverride(54.0f);
+		RowSize->SetHeightOverride(50.0f);
 		RowSize->SetContent(FriendButton);
 		FriendsList->AddChild(RowSize);
 		USpacer* Gap = WidgetTree->ConstructWidget<USpacer>(
 			USpacer::StaticClass(), *FString::Printf(TEXT("SteamFriendGap%d"), Index));
-		Gap->SetSize(FVector2D(0.0f, 5.0f));
+		Gap->SetSize(FVector2D(0.0f, 4.0f));
 		FriendsList->AddChild(Gap);
 	}
 }
 
 void UPHMatchmakingWidget::HandleQuitClicked()
 {
-	UKismetSystemLibrary::QuitGame(this, GetOwningPlayer(), EQuitPreference::Quit, false);
+	if (UPHSessionSubsystem* Sessions = GetSessionSubsystem())
+	{
+		Sessions->LeaveSessionAndQuitGame();
+	}
 }
 
 void UPHMatchmakingWidget::HandleGatewayStateChanged(
@@ -1293,7 +1468,7 @@ void UPHMatchmakingWidget::RefreshMatchmakingControls()
 	const bool bCanCancel = bHasLocalTicket
 		&& GatewayState != EPHGatewayMatchmakingState::Cancelling
 		&& GatewayState != EPHGatewayMatchmakingState::Connecting;
-	SetButtonsEnabled(bCanStart, bCanCancel);
+	SetButtonsEnabled(bCanStart, bCanCancel, bHasLocalTicket);
 }
 
 void UPHMatchmakingWidget::RefreshLocalSteamIdentity()
@@ -1351,74 +1526,105 @@ void UPHMatchmakingWidget::RefreshClientUpdateNotice()
 void UPHMatchmakingWidget::RefreshLobbyPresentation()
 {
 	const UPHMatchmakingGatewaySubsystem* Gateway = GetGatewaySubsystem();
-	const bool bHasLobby = Gateway != nullptr && Gateway->HasLobbySnapshot();
+	const bool bDebugFullLobby = IsFullLobbyPreviewRequested();
+	const bool bHasLobby = bDebugFullLobby || (Gateway != nullptr && Gateway->HasLobbySnapshot());
 	if (LobbyPanel != nullptr)
 	{
 		LobbyPanel->SetVisibility(bHasLobby ? ESlateVisibility::Visible : ESlateVisibility::Collapsed);
 	}
 	if (MainMenuPanel != nullptr)
 	{
-		MainMenuPanel->SetPadding(bHasLobby ? FMargin(20.0f) : FMargin(10.0f));
+		MainMenuPanel->SetPadding(FMargin(10.0f));
 		if (UCanvasPanelSlot* MenuSlot = Cast<UCanvasPanelSlot>(MainMenuPanel->Slot))
 		{
-			MenuSlot->SetSize(bHasLobby ? FVector2D(400.0f, 720.0f) : FVector2D(96.0f, 430.0f));
+			MenuSlot->SetSize(FVector2D(96.0f, 430.0f));
 		}
+	}
+	if (RoleActionsPanel != nullptr)
+	{
+		RoleActionsPanel->SetVisibility(bHasLobby ? ESlateVisibility::Collapsed : ESlateVisibility::Visible);
 	}
 	if (HunterPreviewCard != nullptr)
 	{
-		const bool bHunter = bHasLobby
-			&& Gateway->GetLobbyAssignedRole() == EPHPlayerRole::Hunter;
+		const bool bHunter = bHasLobby && (IsHunterLobbyPreviewRequested()
+			|| (Gateway != nullptr && Gateway->GetLobbyAssignedRole() == EPHPlayerRole::Hunter));
 		HunterPreviewCard->SetVisibility(bHunter ? ESlateVisibility::Visible : ESlateVisibility::Collapsed);
 	}
 	if (HostButton != nullptr) HostButton->SetVisibility(bHasLobby ? ESlateVisibility::Collapsed : ESlateVisibility::Visible);
 	if (FindButton != nullptr) FindButton->SetVisibility(bHasLobby ? ESlateVisibility::Collapsed : ESlateVisibility::Visible);
 	if (RandomButton != nullptr) RandomButton->SetVisibility(bHasLobby ? ESlateVisibility::Collapsed : ESlateVisibility::Visible);
 	if (CustomizationButton != nullptr) CustomizationButton->SetVisibility(bHasLobby ? ESlateVisibility::Collapsed : ESlateVisibility::Visible);
+	if (QuitButton != nullptr)
+	{
+		// The waiting lobby has one unambiguous exit: cancel the ticket and return
+		// to the role menu. Closing the application remains an accueil-only action.
+		QuitButton->SetVisibility(bHasLobby ? ESlateVisibility::Collapsed : ESlateVisibility::Visible);
+	}
 	if (!bHasLobby)
 	{
+		for (UImage* SurvivorIcon : LobbySurvivorReadyIcons)
+		{
+			if (SurvivorIcon != nullptr)
+			{
+				SurvivorIcon->SetVisibility(ESlateVisibility::Collapsed);
+			}
+		}
+		if (LobbyHunterReadyIcon != nullptr)
+		{
+			LobbyHunterReadyIcon->SetVisibility(ESlateVisibility::Collapsed);
+		}
 		ClearLobbyCharacterPreview();
 		RefreshPodiumInviteButtons();
 		return;
 	}
 
-	const bool bHunter = Gateway->GetLobbyAssignedRole() == EPHPlayerRole::Hunter;
-	if (LobbyTitleLabel != nullptr)
-	{
-		LobbyTitleLabel->SetText(FText::FromString(
-			bHunter ? TEXT("OBSERVATOIRE DU TUEUR") : TEXT("SALON DES SURVIVANTS")));
-	}
+	const bool bHunter = IsHunterLobbyPreviewRequested()
+		|| (!bDebugFullLobby && Gateway != nullptr
+			&& Gateway->GetLobbyAssignedRole() == EPHPlayerRole::Hunter);
+	const int32 SurvivorsPresent = bDebugFullLobby ? GetLobbyPreviewSurvivorCount()
+		: (Gateway != nullptr ? Gateway->GetLobbySurvivorsPresent() : 0);
+	const FString Phase = bDebugFullLobby ? TEXT("countdown") : Gateway->GetLobbyPhase();
 	if (LobbyRoleLabel != nullptr)
 	{
-		LobbyRoleLabel->SetText(FText::FromString(bHunter
-			? TEXT("TU ES LE TUEUR")
-			: TEXT("TU ES SURVIVANT")));
+		LobbyRoleLabel->SetText(FText::FromString(FString::Printf(
+			TEXT("%d / 4 SURVIVANT%s"),
+			SurvivorsPresent,
+			SurvivorsPresent > 1 ? TEXT("S") : TEXT(""))));
 	}
-	if (LobbyCountdownLabel != nullptr)
+	const bool bHunterReady = bHunter || Phase != TEXT("waiting");
+	for (int32 SlotIndex = 0; SlotIndex < LobbySurvivorReadyIcons.Num(); ++SlotIndex)
 	{
-		const FString Phase = Gateway->GetLobbyPhase();
-		FString CountdownText;
-		if (Phase == TEXT("waiting")) CountdownText = TEXT("EN ATTENTE DU ROSTER MINIMUM 1 + 1");
-		else if (Phase == TEXT("countdown")) CountdownText = FString::Printf(
-			TEXT("DEPART DANS %d s — JOUEURS ENCORE ACCEPTES"), Gateway->GetLobbyCountdownSeconds());
-		else if (Phase == TEXT("locked")) CountdownText = FString::Printf(
-			TEXT("SALON VERROUILLE — SERVEUR DANS %d s"), Gateway->GetLobbyCountdownSeconds());
-		else CountdownText = TEXT("SERVEUR DE JEU EN PREPARATION...");
-		LobbyCountdownLabel->SetText(FText::FromString(CountdownText));
-	}
-
-	const TArray<int32> OccupiedSlots = Gateway->GetOccupiedSurvivorSlots();
-	for (int32 SlotIndex = 0; SlotIndex < SurvivorSlotLabels.Num(); ++SlotIndex)
-	{
-		if (UTextBlock* SlotLabel = SurvivorSlotLabels[SlotIndex])
+		if (UImage* SurvivorIcon = LobbySurvivorReadyIcons[SlotIndex])
 		{
-			const bool bPresent = OccupiedSlots.Contains(SlotIndex + 1);
-			SlotLabel->SetText(FText::FromString(FString::Printf(
-				TEXT("SURVIVANT %d  —  %s"), SlotIndex + 1,
-				bPresent ? TEXT("PRESENT") : TEXT("EN ATTENTE"))));
-			SlotLabel->SetColorAndOpacity(FSlateColor(bPresent
-				? FLinearColor(0.18f, 0.85f, 0.48f, 1.0f)
-				: FLinearColor(0.48f, 0.55f, 0.64f, 1.0f)));
+			SurvivorIcon->SetVisibility(SlotIndex < SurvivorsPresent
+				? ESlateVisibility::HitTestInvisible
+				: ESlateVisibility::Collapsed);
 		}
+	}
+	if (LobbyHunterReadyIcon != nullptr)
+	{
+		LobbyHunterReadyIcon->SetVisibility(bHunterReady
+			? ESlateVisibility::HitTestInvisible
+			: ESlateVisibility::Collapsed);
+	}
+	if (LobbyRosterCountLabel != nullptr)
+	{
+		FString CountdownText;
+		if (Phase == TEXT("waiting")) CountdownText = TEXT("EN ATTENTE");
+		else if (Phase == TEXT("countdown")) CountdownText = FString::Printf(
+			TEXT("DÉPART DANS %d s"), bDebugFullLobby ? 24 : Gateway->GetLobbyCountdownSeconds());
+		else if (Phase == TEXT("locked")) CountdownText = FString::Printf(
+			TEXT("DÉPART DANS %d s"), Gateway->GetLobbyCountdownSeconds());
+		else CountdownText = TEXT("PRÉPARATION DU SERVEUR...");
+		LobbyRosterCountLabel->SetText(FText::FromString(CountdownText));
+		LobbyRosterCountLabel->SetColorAndOpacity(FSlateColor(
+			Phase == TEXT("locked")
+				? FLinearColor(1.0f, 0.22f, 0.16f, 1.0f)
+				: (Phase == TEXT("server_starting")
+					? FLinearColor(1.0f, 0.48f, 0.20f, 1.0f)
+					: (Phase == TEXT("waiting")
+						? FLinearColor(0.62f, 0.68f, 0.74f, 1.0f)
+						: FLinearColor(0.45f, 0.82f, 1.0f, 1.0f)))));
 	}
 	RefreshLobbyCharacterPreview();
 	RefreshPodiumInviteButtons();
@@ -1440,9 +1646,18 @@ void UPHMatchmakingWidget::RefreshLobbyCharacterPreview()
 		return;
 	}
 
-	TArray<int32> OccupiedSlots = bDebugFullLobby
-		? TArray<int32>({1, 2, 3, 4})
-		: Gateway->GetOccupiedSurvivorSlots();
+	TArray<int32> OccupiedSlots;
+	if (bDebugFullLobby)
+	{
+		for (int32 PreviewSlotIndex = 1; PreviewSlotIndex <= GetLobbyPreviewSurvivorCount(); ++PreviewSlotIndex)
+		{
+			OccupiedSlots.Add(PreviewSlotIndex);
+		}
+	}
+	else
+	{
+		OccupiedSlots = Gateway->GetOccupiedSurvivorSlots();
+	}
 	OccupiedSlots.Sort();
 	const bool bShowPrivateHunter = IsHunterLobbyPreviewRequested()
 		|| (!bDebugFullLobby && Gateway->GetLobbyAssignedRole() == EPHPlayerRole::Hunter);
@@ -1514,7 +1729,8 @@ void UPHMatchmakingWidget::RefreshLobbyCharacterPreview()
 	SpawnParameters.SpawnCollisionHandlingOverride = ESpawnActorCollisionHandlingMethod::AlwaysSpawn;
 	SpawnParameters.ObjectFlags |= RF_Transient;
 
-	auto SpawnPreview = [this, &SpawnParameters](UClass* PreviewClass, const FTransform& Transform)
+	auto SpawnPreview = [this, &SpawnParameters](
+		UClass* PreviewClass, const FTransform& Transform, const float TargetHeight)
 	{
 		if (PreviewClass == nullptr)
 		{
@@ -1532,6 +1748,15 @@ void UPHMatchmakingWidget::RefreshLobbyCharacterPreview()
 					Movement->DisableMovement();
 				}
 			}
+			FVector BoundsOrigin;
+			FVector BoundsExtent;
+			Preview->GetActorBounds(true, BoundsOrigin, BoundsExtent, false);
+			const float CurrentHeight = BoundsExtent.Z * 2.0f;
+			if (CurrentHeight > KINDA_SMALL_NUMBER)
+			{
+				const float ScaleCorrection = FMath::Clamp(TargetHeight / CurrentHeight, 0.2f, 3.0f);
+				Preview->SetActorScale3D(Preview->GetActorScale3D() * ScaleCorrection);
+			}
 			LobbyPreviewActors.Add(Preview);
 		}
 	};
@@ -1546,15 +1771,15 @@ void UPHMatchmakingWidget::RefreshLobbyCharacterPreview()
 		if (MatchingMarker != nullptr)
 		{
 			FTransform PreviewTransform = MatchingMarker->Transform;
-			PreviewTransform.SetScale3D(FVector(0.64f));
-			SpawnPreview(SurvivorPreviewClass, PreviewTransform);
+			PreviewTransform.SetScale3D(FVector(1.0f));
+			SpawnPreview(SurvivorPreviewClass, PreviewTransform, 182.0f);
 		}
 		else
 		{
 			const float CenteredSlot = static_cast<float>(OccupiedSlot - 1) - 1.5f;
 			const FVector Location = CameraLocation + Forward * 650.0f
 				+ Right * (CenteredSlot * 125.0f) - Up * 135.0f;
-			SpawnPreview(SurvivorPreviewClass, FTransform(FacingRotation, Location, FVector(0.64f)));
+			SpawnPreview(SurvivorPreviewClass, FTransform(FacingRotation, Location), 182.0f);
 		}
 	}
 	PreviewedSurvivorSlots = OccupiedSlots;
@@ -1564,13 +1789,13 @@ void UPHMatchmakingWidget::RefreshLobbyCharacterPreview()
 		if (HunterMarker.IsSet())
 		{
 			FTransform PreviewTransform = HunterMarker.GetValue();
-			PreviewTransform.SetScale3D(FVector(0.72f));
-			SpawnPreview(HunterPreviewClass, PreviewTransform);
+			PreviewTransform.SetScale3D(FVector(1.0f));
+			SpawnPreview(HunterPreviewClass, PreviewTransform, 210.0f);
 		}
 		else
 		{
 			const FVector Location = CameraLocation + Forward * 315.0f + Right * 265.0f - Up * 175.0f;
-			SpawnPreview(HunterPreviewClass, FTransform(FacingRotation, Location, FVector(0.72f)));
+			SpawnPreview(HunterPreviewClass, FTransform(FacingRotation, Location), 210.0f);
 		}
 	}
 }
@@ -1602,13 +1827,18 @@ void UPHMatchmakingWidget::RefreshPodiumInviteButtons()
 	const UPHMatchmakingGatewaySubsystem* Gateway = GetGatewaySubsystem();
 	const UPHSessionSubsystem* Sessions = GetSessionSubsystem();
 	APlayerController* PlayerController = GetOwningPlayer();
-	const bool bCanInvite = Gateway != nullptr
-		&& Gateway->HasLobbySnapshot()
-		&& !Gateway->IsLobbyLocked()
-		&& Sessions != nullptr
-		&& Sessions->IsSteamAvailable()
-		&& MainMenuPanel != nullptr
-		&& MainMenuPanel->GetVisibility() == ESlateVisibility::Visible;
+	const bool bDebugFullLobby = IsFullLobbyPreviewRequested();
+	const bool bHasLobby = bDebugFullLobby || (Gateway != nullptr && Gateway->HasLobbySnapshot());
+	const bool bFriendsOpen = FriendsPanel != nullptr
+		&& FriendsPanel->GetVisibility() == ESlateVisibility::Visible;
+	const bool bCanInvite = bDebugFullLobby
+		? bHasLobby && !bFriendsOpen
+		: bHasLobby
+			&& Gateway != nullptr
+			&& !Gateway->IsLobbyLocked()
+			&& Sessions != nullptr
+			&& Sessions->IsSteamAvailable()
+			&& !bFriendsOpen;
 	if (LobbyPodiumMarkers.Num() != 4
 		|| LobbyPodiumMarkers.ContainsByPredicate([](const TObjectPtr<AActor>& Marker)
 		{
@@ -1617,32 +1847,83 @@ void UPHMatchmakingWidget::RefreshPodiumInviteButtons()
 	{
 		RefreshPodiumMarkers();
 	}
-	const TArray<int32> OccupiedSlots = Gateway != nullptr
-		? Gateway->GetOccupiedSurvivorSlots() : TArray<int32>();
+	TArray<int32> OccupiedSlots;
+	if (bDebugFullLobby)
+	{
+		for (int32 PreviewSlotIndex = 1; PreviewSlotIndex <= GetLobbyPreviewSurvivorCount(); ++PreviewSlotIndex)
+		{
+			OccupiedSlots.Add(PreviewSlotIndex);
+		}
+	}
+	else if (Gateway != nullptr)
+	{
+		OccupiedSlots = Gateway->GetOccupiedSurvivorSlots();
+	}
+	static const TCHAR* PreviewNames[] = {TEXT("Thomas"), TEXT("Alpha45"), TEXT("Amenos1"), TEXT("Amonaton [FR]")};
 	for (int32 SlotIndex = 0; SlotIndex < PodiumInviteButtons.Num(); ++SlotIndex)
 	{
 		UButton* Button = PodiumInviteButtons[SlotIndex];
+		UBorder* NameCard = PodiumNameCards.IsValidIndex(SlotIndex)
+			? PodiumNameCards[SlotIndex] : nullptr;
+		UTextBlock* NameLabel = PodiumNameLabels.IsValidIndex(SlotIndex)
+			? PodiumNameLabels[SlotIndex] : nullptr;
 		AActor* Marker = LobbyPodiumMarkers.IsValidIndex(SlotIndex)
 			? LobbyPodiumMarkers[SlotIndex] : nullptr;
-		if (!bCanInvite || OccupiedSlots.Contains(SlotIndex + 1)
-			|| Button == nullptr || !IsValid(Marker) || PlayerController == nullptr)
+		const bool bOccupied = OccupiedSlots.Contains(SlotIndex + 1);
+		if (!bHasLobby || Button == nullptr || !IsValid(Marker) || PlayerController == nullptr)
 		{
 			if (Button != nullptr) Button->SetVisibility(ESlateVisibility::Collapsed);
+			if (NameCard != nullptr) NameCard->SetVisibility(ESlateVisibility::Collapsed);
 			continue;
 		}
-		FVector2D WidgetPosition;
-		const FVector WorldPosition = Marker->GetActorLocation() + FVector(0.0f, 0.0f, 185.0f);
+
+		FVector2D InvitePosition;
+		const FVector InviteWorldPosition = Marker->GetActorLocation() + FVector(0.0f, 0.0f, 205.0f);
 		if (!UWidgetLayoutLibrary::ProjectWorldLocationToWidgetPosition(
-			PlayerController, WorldPosition, WidgetPosition, false))
+			PlayerController, InviteWorldPosition, InvitePosition, false))
 		{
 			Button->SetVisibility(ESlateVisibility::Collapsed);
+			if (NameCard != nullptr) NameCard->SetVisibility(ESlateVisibility::Collapsed);
 			continue;
 		}
 		if (UCanvasPanelSlot* CanvasSlot = Cast<UCanvasPanelSlot>(Button->Slot))
 		{
-			CanvasSlot->SetPosition(WidgetPosition);
+			CanvasSlot->SetPosition(InvitePosition);
 		}
-		Button->SetVisibility(ESlateVisibility::Visible);
+		Button->SetVisibility(!bOccupied && bCanInvite
+			? ESlateVisibility::Visible : ESlateVisibility::Collapsed);
+
+		if (!bOccupied || NameCard == nullptr || NameLabel == nullptr)
+		{
+			if (NameCard != nullptr) NameCard->SetVisibility(ESlateVisibility::Collapsed);
+			continue;
+		}
+		FVector2D NamePosition;
+		const FVector NameWorldPosition = Marker->GetActorLocation() - FVector(0.0f, 0.0f, 105.0f);
+		if (!UWidgetLayoutLibrary::ProjectWorldLocationToWidgetPosition(
+			PlayerController, NameWorldPosition, NamePosition, false))
+		{
+			NameCard->SetVisibility(ESlateVisibility::Collapsed);
+			continue;
+		}
+		if (UCanvasPanelSlot* NameCanvasSlot = Cast<UCanvasPanelSlot>(NameCard->Slot))
+		{
+			NameCanvasSlot->SetPosition(NamePosition + FVector2D(0.0f, 12.0f));
+		}
+		FString DisplayName = bDebugFullLobby
+			? FString(PreviewNames[SlotIndex])
+			: Gateway->GetSurvivorDisplayName(SlotIndex + 1);
+		if (DisplayName.IsEmpty())
+		{
+			DisplayName = TEXT("Joueur Steam");
+		}
+		constexpr int32 MaxPodiumNameCharacters = 20;
+		if (DisplayName.Len() > MaxPodiumNameCharacters)
+		{
+			DisplayName = DisplayName.Left(MaxPodiumNameCharacters - 3) + TEXT("...");
+		}
+		NameLabel->SetText(FText::FromString(DisplayName));
+		NameCard->SetVisibility(ESlateVisibility::HitTestInvisible);
 	}
 }
 
@@ -1662,7 +1943,8 @@ void UPHMatchmakingWidget::ClearLobbyCharacterPreview()
 
 void UPHMatchmakingWidget::SetButtonsEnabled(
 	const bool bRoleButtonsEnabled,
-	const bool bCancelEnabled)
+	const bool bCancelEnabled,
+	const bool bShowCancel)
 {
 	if (HostButton != nullptr)
 	{
@@ -1679,7 +1961,16 @@ void UPHMatchmakingWidget::SetButtonsEnabled(
 	if (CancelButton != nullptr)
 	{
 		CancelButton->SetIsEnabled(bCancelEnabled);
-		CancelButton->SetVisibility(bCancelEnabled ? ESlateVisibility::Visible : ESlateVisibility::Collapsed);
+		CancelButton->SetVisibility(bShowCancel ? ESlateVisibility::Visible : ESlateVisibility::Collapsed);
+	}
+	if (QuitButton != nullptr)
+	{
+		const UPHMatchmakingGatewaySubsystem* Gateway = GetGatewaySubsystem();
+		const bool bHasLobby = IsFullLobbyPreviewRequested()
+			|| (Gateway != nullptr && Gateway->HasLobbySnapshot());
+		QuitButton->SetVisibility(bShowCancel || bHasLobby
+			? ESlateVisibility::Collapsed
+			: ESlateVisibility::Visible);
 	}
 }
 

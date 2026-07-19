@@ -419,10 +419,11 @@ void APHPlayerController::ClientReturnToLobbyAfterMatch_Implementation(
 	const FString& LocalPlayerName,
 	const int32 LocalPlayerId)
 {
-	if (!IsLocalController())
+	if (!IsLocalController() || bFinalResultsTransitionStarted || !FinalResults.bFinalized)
 	{
 		return;
 	}
+	bFinalResultsTransitionStarted = true;
 
 	if (UGameInstance* GameInstance = GetGameInstance())
 	{
@@ -434,6 +435,21 @@ void APHPlayerController::ClientReturnToLobbyAfterMatch_Implementation(
 			SessionSubsystem->LeaveSessionAndShowResults();
 		}
 	}
+}
+
+void APHPlayerController::HandleReplicatedFinalResults(const FPHMatchResultsSnapshot& FinalResults)
+{
+	if (!IsLocalController() || bFinalResultsTransitionStarted || !FinalResults.bFinalized)
+	{
+		return;
+	}
+
+	const APHPlayerState* LocalPlayerState = GetPlayerState<APHPlayerState>();
+	ClientReturnToLobbyAfterMatch_Implementation(
+		FinalResults,
+		LocalPlayerState != nullptr ? LocalPlayerState->GetPlayerRole() : EPHPlayerRole::Unassigned,
+		LocalPlayerState != nullptr ? LocalPlayerState->GetPlayerName() : FString(),
+		LocalPlayerState != nullptr ? LocalPlayerState->GetPlayerId() : INDEX_NONE);
 }
 
 void APHPlayerController::NotifyControlledPawnChanged()

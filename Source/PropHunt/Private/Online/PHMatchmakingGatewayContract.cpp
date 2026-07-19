@@ -34,6 +34,22 @@ bool IsSafePublicMessage(const FString& Value)
 		&& !Value.Contains(TEXT("\r")) && !Value.Contains(TEXT("\n"));
 }
 
+bool IsSafeDisplayName(const FString& Value)
+{
+	if (Value.IsEmpty() || Value.Len() > 32)
+	{
+		return false;
+	}
+	for (const TCHAR Character : Value)
+	{
+		if (FChar::IsControl(Character) || Character == TEXT('\r') || Character == TEXT('\n'))
+		{
+			return false;
+		}
+	}
+	return true;
+}
+
 bool IsValidPort(const FString& PortText)
 {
 	if (PortText.IsEmpty() || PortText.Len() > 5 || !PortText.IsNumeric())
@@ -435,6 +451,40 @@ bool PHMatchmakingGatewayContract::ParseTicketStatus(
 				return false;
 			}
 			OutTicket.OccupiedSurvivorSlots.Sort();
+			OutTicket.SurvivorDisplayNames.Reset();
+			const TArray<TSharedPtr<FJsonValue>>* SurvivorPlayersJson = nullptr;
+			if ((*LobbyObject)->TryGetArrayField(TEXT("survivor_players"), SurvivorPlayersJson))
+			{
+				if (SurvivorPlayersJson == nullptr || SurvivorPlayersJson->Num() != OutTicket.SurvivorsPresent)
+				{
+					OutError = TEXT("La liste des joueurs du salon est invalide.");
+					return false;
+				}
+				for (const TSharedPtr<FJsonValue>& PlayerValue : *SurvivorPlayersJson)
+				{
+					const TSharedPtr<FJsonObject>* PlayerObject = nullptr;
+					double SlotNumber = 0.0;
+					FString DisplayName;
+					if (!PlayerValue.IsValid() || !PlayerValue->TryGetObject(PlayerObject)
+						|| PlayerObject == nullptr || !PlayerObject->IsValid()
+						|| !(*PlayerObject)->TryGetNumberField(TEXT("slot"), SlotNumber)
+						|| !(*PlayerObject)->TryGetStringField(TEXT("display_name"), DisplayName)
+						|| SlotNumber != FMath::FloorToDouble(SlotNumber)
+						|| !OutTicket.OccupiedSurvivorSlots.Contains(static_cast<int32>(SlotNumber))
+						|| OutTicket.SurvivorDisplayNames.Contains(static_cast<int32>(SlotNumber)))
+					{
+						OutError = TEXT("La liste des joueurs du salon est invalide.");
+						return false;
+					}
+					DisplayName.TrimStartAndEndInline();
+					if (!IsSafeDisplayName(DisplayName))
+					{
+						OutError = TEXT("Un pseudo Steam du salon est invalide.");
+						return false;
+					}
+					OutTicket.SurvivorDisplayNames.Add(static_cast<int32>(SlotNumber), DisplayName);
+				}
+			}
 			if (OutTicket.AssignedRole == EPHPlayerRole::Prop)
 			{
 				double AssignedSlot = 0.0;

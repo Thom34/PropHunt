@@ -97,13 +97,18 @@ void APHExitGate::Tick(const float DeltaSeconds)
 	}
 
 	const float SafeDuration = FMath::Clamp(OpenDurationSeconds, 1.0f, 120.0f);
-	OpenProgress = FMath::Clamp(OpenProgress + DeltaSeconds / SafeDuration, 0.0f, 1.0f);
+	const float NewProgress = FMath::Clamp(OpenProgress + DeltaSeconds / SafeDuration, 0.0f, 1.0f);
+	if (PHExitGateFlow::HasReachedOpenThreshold(NewProgress))
+	{
+		// Publish progress=100%, open state and disabled door collision in one
+		// authoritative update. Clients never observe a full bar with a closed door.
+		OpenProgress = 1.0f;
+		CompleteOpening();
+		return;
+	}
+	OpenProgress = NewProgress;
 	OnRep_GateState();
 	ForceNetUpdate();
-	if (OpenProgress >= 1.0f - KINDA_SMALL_NUMBER)
-	{
-		CompleteOpening();
-	}
 }
 
 void APHExitGate::GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& OutLifetimeProps) const

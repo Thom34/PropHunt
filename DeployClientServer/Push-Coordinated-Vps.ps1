@@ -5,6 +5,7 @@ param(
     [ValidateSet('Auto', 'Reuse', 'Regenerate')]
     [string]$BundleMode = 'Auto',
     [switch]$SkipGatewayTests,
+    [switch]$SkipReadiness,
     [switch]$PlanOnly
 )
 
@@ -18,6 +19,10 @@ if ($config -isnot [hashtable]) { throw "Configuration de déploiement invalide:
 if (-not $VpsHost) { $VpsHost = [string]$config.VpsHost }
 if (-not $ReleaseName) { $ReleaseName = [string]$config.VpsReleaseName }
 
+if (-not $SkipReadiness) {
+    & (Join-Path $scriptRoot 'Test-ReleaseReadiness.ps1') -PostBuild -ArtifactScope Both -PlanOnly:$PlanOnly
+}
+
 & (Join-Path $projectRoot 'BuildTools\Version\Test-PropHuntVersion.ps1')
 $manifest = Get-Content -LiteralPath (Join-Path $projectRoot 'BuildTools\Version\PropHuntVersion.json') -Raw | ConvertFrom-Json
 $buildVersion = [string]$manifest.release_version
@@ -30,7 +35,14 @@ $gatewayRoot = Join-Path $projectRoot 'SourceArt\Deploy\PropHuntGateway'
 $gatewayPackage = Join-Path $gatewayRoot 'prophunt_gateway'
 $gatewayFiles = @(Get-ChildItem -LiteralPath $gatewayPackage -Filter '*.py' -File | Sort-Object Name)
 if ($gatewayFiles.Count -lt 5) { throw "Paquet gateway incomplet: $gatewayPackage" }
-$gatewayPaths = [string[]]@($gatewayFiles | ForEach-Object { $_.FullName })
+$gatewayServiceUnit = Join-Path $gatewayRoot 'prophunt-gateway.service'
+if (-not (Test-Path -LiteralPath $gatewayServiceUnit -PathType Leaf)) {
+    throw "Unité systemd gateway absente: $gatewayServiceUnit"
+}
+$gatewayPaths = [string[]]@(
+    @($gatewayFiles | ForEach-Object { $_.FullName })
+    $gatewayServiceUnit
+)
 
 Write-Host '[plan] 1. Validation version et tests gateway locaux'
 Write-Host '[plan] 2. Sauvegarde gateway/NOVA/SQLite et arrêt de la gateway'
@@ -39,7 +51,7 @@ Write-Host '[plan] 4. Bascule de la route NOVA, restart NOVA, attente du socket'
 Write-Host '[plan] 5. Redémarrage gateway et preuve /healthz'
 if ($PlanOnly) {
     Write-Host "[PLAN UNIQUEMENT] $ReleaseName / build $buildVersion / protocole $protocolVersion / hôte $VpsHost"
-    exit 0
+    return
 }
 
 if (-not $SkipGatewayTests) {
@@ -74,6 +86,24 @@ if pgrep -af '[P]ropHuntServer' >/dev/null; then
   printf 'Refus: un worker PropHunt est actif.\n' >&2
   exit 70
 fi
+python3 - <<'PY'
+import sqlite3
+from pathlib import Path
+
+path = Path('/var/lib/prophunt-gateway/tickets.sqlite3')
+if not path.exists():
+    print('[gate] gateway database absent; no active ticket to preserve')
+    raise SystemExit(0)
+connection = sqlite3.connect(f'file:{path}?mode=ro', uri=True)
+active = connection.execute(
+    "SELECT COUNT(*) FROM tickets WHERE state IN ('queued','forming','allocating','ready')"
+).fetchone()[0]
+pending_allocations = connection.execute("SELECT COUNT(*) FROM allocation_attempts").fetchone()[0]
+pending_cancellations = connection.execute("SELECT COUNT(*) FROM allocation_cancellations").fetchone()[0]
+print(f'[gate] active_tickets={active} allocation_attempts={pending_allocations} cancellation_outbox={pending_cancellations}')
+if active or pending_allocations or pending_cancellations:
+    raise SystemExit('Refus: matchmaking ou outbox encore actif; passer en maintenance et drainer/reset explicitement.')
+PY
 if [[ -e "${backup}" ]]; then
   printf 'Refus: sauvegarde déjà présente: %s\n' "${backup}" >&2
   exit 71
@@ -86,13 +116,17 @@ install -d -m 0750 "${backup}"
 cp -a /opt/prophunt-gateway "${backup}/gateway-opt"
 cp -a /etc/prophunt-gateway/config.json "${backup}/gateway-config.json"
 cp -a /etc/nova-orchestrator/config.toml "${backup}/nova-config.toml"
+cp -a /etc/systemd/system/prophunt-gateway.service "${backup}/prophunt-gateway.service"
 if [[ -f /var/lib/prophunt-gateway/tickets.sqlite3 ]]; then
   cp -a /var/lib/prophunt-gateway/tickets.sqlite3 "${backup}/tickets.sqlite3"
 fi
 
-cp -a "${upload}/." /opt/prophunt-gateway/prophunt_gateway/
+cp -a "${upload}/"'*.py' /opt/prophunt-gateway/prophunt_gateway/
 find /opt/prophunt-gateway/prophunt_gateway -maxdepth 1 -type f -name '*.py' -exec chmod 0644 {} +
 chown -R root:root /opt/prophunt-gateway/prophunt_gateway
+install -o root -g root -m 0644 "${upload}/prophunt-gateway.service" /etc/systemd/system/prophunt-gateway.service
+systemd-analyze verify /etc/systemd/system/prophunt-gateway.service
+systemctl daemon-reload
 
 python3 - "${protocol}" "${build_version}" <<'PY'
 import json
@@ -122,7 +156,10 @@ build_version="$2"
 protocol="$3"
 upload="$4"
 
-test -x "/home/ue-game/releases/${release}/PropHuntServer.sh"
+release_path="/home/ue-game/releases/${release}"
+[[ "$(stat -c '%U:%G:%a' "${release_path}")" == 'root:uegame:750' ]]
+sudo -u uegame test -x "${release_path}/PropHuntServer.sh"
+sudo -u uegame test -x "${release_path}/PropHunt/Binaries/Linux/PropHuntServer-Linux-Shipping"
 python3 - "${release}" "${build_version}" <<'PY'
 import os
 import re
@@ -151,12 +188,38 @@ for ((attempt=0; attempt<30; attempt++)); do
 done
 [[ -S /run/nova-orchestrator/api.sock ]]
 systemctl start prophunt-gateway
-health="$(curl -fsS http://127.0.0.1:8790/healthz)"
+health=''
+for ((attempt=0; attempt<30; attempt++)); do
+  if health="$(curl -fsS http://127.0.0.1:8790/healthz 2>/dev/null)"; then
+    break
+  fi
+  sleep 1
+done
+[[ -n "${health}" ]]
 printf '%s\n' "${health}"
 jq -e --arg build "${build_version}" --argjson protocol "${protocol}" \
   '.ok == true and .build_id == $build and .protocol_version == $protocol' <<<"${health}" >/dev/null
 rm -rf -- "${upload}"
 systemctl is-active nova-orchestrator prophunt-gateway >/dev/null
+[[ "$(stat -c '%U:%G:%a' "${release_path}")" == 'root:uegame:750' ]]
+sudo -u uegame test -x "${release_path}/PropHuntServer.sh"
+python3 - <<'PY'
+import sqlite3
+from pathlib import Path
+path = Path('/var/lib/prophunt-gateway/tickets.sqlite3')
+if not path.exists():
+    raise SystemExit(0)
+connection = sqlite3.connect(f'file:{path}?mode=ro', uri=True)
+checks = {
+    'active_tickets': "SELECT COUNT(*) FROM tickets WHERE state IN ('queued','forming','allocating','ready')",
+    'allocation_attempts': 'SELECT COUNT(*) FROM allocation_attempts',
+    'cancellation_outbox': 'SELECT COUNT(*) FROM allocation_cancellations',
+}
+counts = {name: connection.execute(query).fetchone()[0] for name, query in checks.items()}
+print('[post-gate] ' + ' '.join(f'{name}={count}' for name, count in counts.items()))
+if any(counts.values()):
+    raise SystemExit('Le plan de contrôle a redémarré avec un état matchmaking non drainé.')
+PY
 printf '[OK] Plan de contrôle activé pour %s.\n' "${release}"
 '@
 
@@ -172,9 +235,11 @@ rm -rf -- /opt/prophunt-gateway
 cp -a "${backup}/gateway-opt" /opt/prophunt-gateway
 cp -a "${backup}/gateway-config.json" /etc/prophunt-gateway/config.json
 cp -a "${backup}/nova-config.toml" /etc/nova-orchestrator/config.toml
+cp -a "${backup}/prophunt-gateway.service" /etc/systemd/system/prophunt-gateway.service
 if [[ -f "${backup}/tickets.sqlite3" ]]; then
   cp -a "${backup}/tickets.sqlite3" /var/lib/prophunt-gateway/tickets.sqlite3
 fi
+systemctl daemon-reload
 systemctl restart nova-orchestrator
 for ((attempt=0; attempt<30; attempt++)); do
   [[ -S /run/nova-orchestrator/api.sock ]] && break
@@ -190,7 +255,7 @@ try {
     $prepareScript | & ssh $VpsHost "sudo -n bash -s -- '$remoteUpload' '$remoteBackup' '$protocolVersion' '$buildVersion'"
     if ($LASTEXITCODE -ne 0) { throw 'Préparation coordonnée gateway/NOVA en échec.' }
 
-    & (Join-Path $scriptRoot 'Push-Server-Vps.ps1') -VpsHost $VpsHost -ReleaseName $ReleaseName -BundleMode $BundleMode
+    & (Join-Path $scriptRoot 'Push-Server-Vps.ps1') -VpsHost $VpsHost -ReleaseName $ReleaseName -BundleMode $BundleMode -SkipReadiness
 
     $activateScript | & ssh $VpsHost "sudo -n bash -s -- '$ReleaseName' '$buildVersion' '$protocolVersion' '$remoteUpload'"
     if ($LASTEXITCODE -ne 0) { throw 'Activation coordonnée gateway/NOVA en échec.' }

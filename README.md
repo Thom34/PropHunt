@@ -41,6 +41,22 @@ checkout privé `SourceArt` est présent.
 
 ## État actuel
 
+La cible publique est un serveur dédié orchestré : le client Steam crée un ticket auprès de la gateway, attend
+dans un salon `1 Tueur + 1..4 Survivants`, puis NOVA alloue un worker Linux après verrouillage du roster. Aucun
+joueur n'héberge la partie et le serveur valide rôles, admission, gameplay, résultats et sorties.
+
+La publication technique active est `P9.1 / 0.1.1907001`, protocole `91`, sur la branche Steam privée `beta`.
+Le checkout contient un candidat local plus récent qui ne doit pas être republié sous cet identifiant : lobby
+visuel à quatre emplacements, pseudonymes Steam, invitation par `+`, tiroir Amis, sorties de file idempotentes,
+Results redondants et correctifs soin/objectifs/portes. Le prochain candidat doit être `0.1.1907002` ou supérieur
+et être déployé de manière coordonnée client + gateway + serveur.
+
+Le détail vérifié, les limites et les gates de publication sont dans `SourceArt/Docs/PROJECT_STATUS.md`,
+`SourceArt/Docs/24_RELEASE_QUALITY_GATE.md` et `SourceArt/Docs/25_LOBBY_UI_STEAM_INVITES.md` lorsque le checkout
+privé `SourceArt` est présent.
+
+## Historique de la fondation graybox
+
 Le Game Framework réseau minimal, les objectifs, le cycle Au sol/transport/rétention/libération, six Blueprints
 de liaison, le Hunter FPS graybox et le survivant FPS/TPS sont implémentés. Une attaque de mêlée graybox
 autoritaire et verticalement tolérante est disponible sur clic gauche. Le Prop peut aussi copier

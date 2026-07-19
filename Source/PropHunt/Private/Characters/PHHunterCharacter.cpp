@@ -624,21 +624,43 @@ void APHHunterCharacter::PerformAuthoritativeMeleeAttack()
 	APHObjectiveActor* HitObjective = nullptr;
 	if (HitProp == nullptr)
 	{
-		FHitResult ObjectiveHit;
 		FCollisionQueryParams ObjectiveQueryParams(SCENE_QUERY_STAT(PHMeleeObjective), false, this);
 		ObjectiveQueryParams.AddIgnoredActor(this);
-		if (World->LineTraceSingleByChannel(
-			ObjectiveHit,
+		TArray<FHitResult> ObjectiveHits;
+		World->SweepMultiByChannel(
+			ObjectiveHits,
 			TraceStart,
 			TraceEnd,
+			Controller->GetControlRotation().Quaternion(),
 			ECC_Visibility,
-			ObjectiveQueryParams))
+			FCollisionShape::MakeBox(FVector(5.0f, SafeWidth * 0.5f, SafeVerticalTolerance)),
+			ObjectiveQueryParams);
+		ObjectiveHits.Sort([](const FHitResult& Left, const FHitResult& Right)
 		{
-			if (APHObjectiveActor* CandidateObjective = Cast<APHObjectiveActor>(ObjectiveHit.GetActor());
-				CandidateObjective != nullptr
+			return Left.Distance < Right.Distance;
+		});
+		for (const FHitResult& ObjectiveHit : ObjectiveHits)
+		{
+			APHObjectiveActor* CandidateObjective = Cast<APHObjectiveActor>(ObjectiveHit.GetActor());
+			if (CandidateObjective == nullptr)
+			{
+				continue;
+			}
+
+			FHitResult LineOfSightHit;
+			FCollisionQueryParams LineOfSightParams(SCENE_QUERY_STAT(PHMeleeObjectiveLineOfSight), false, this);
+			LineOfSightParams.AddIgnoredActor(this);
+			const bool bBlocked = World->LineTraceSingleByChannel(
+				LineOfSightHit,
+				TraceStart,
+				CandidateObjective->GetInteractionPoint(),
+				ECC_Visibility,
+				LineOfSightParams);
+			if (bBlocked && LineOfSightHit.GetActor() == CandidateObjective
 				&& CandidateObjective->ServerApplyHunterMeleeRegression(*this))
 			{
 				HitObjective = CandidateObjective;
+				break;
 			}
 		}
 	}

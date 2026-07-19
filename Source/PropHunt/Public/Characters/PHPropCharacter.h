@@ -183,6 +183,9 @@ public:
 	int32 GetRecoveryHelperCount() const { return RecoveryHelperCount; }
 
 	UFUNCTION(BlueprintPure, Category = "PropHunt|Capture|Recovery")
+	const APHPropCharacter* GetAssistedDownedProp() const { return AssistedDownedProp; }
+
+	UFUNCTION(BlueprintPure, Category = "PropHunt|Capture|Recovery")
 	float GetCarryDropRecoveryBonus() const { return CarryDropRecoveryBonus; }
 
 	UFUNCTION(BlueprintPure, Category = "PropHunt|Capture|Struggle")
@@ -557,6 +560,7 @@ private:
 	void BeginAssistingDownedTarget(APHPropCharacter& Target);
 	void StopAssistingDownedTarget();
 	void StopRetentionRescue();
+	bool PrepareHumanFormForSupport(const TCHAR* InteractionName);
 	void AddRecoveryHelper(APHPropCharacter& Helper);
 	void RemoveRecoveryHelper(APHPropCharacter& Helper);
 	void ClearRecoveryHelpers();
@@ -886,7 +890,7 @@ private:
 	float NextCarryStruggleShoveProgress;
 	float LastPublishedDownedRecoveryProgress;
 
-	UPROPERTY(Transient)
+	UPROPERTY(Replicated, Transient)
 	TObjectPtr<APHPropCharacter> AssistedDownedProp;
 
 	TSet<TWeakObjectPtr<APHPropCharacter>> RecoveryHelpers;

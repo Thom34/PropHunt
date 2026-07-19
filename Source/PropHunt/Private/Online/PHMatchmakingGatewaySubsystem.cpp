@@ -46,6 +46,26 @@ bool IsSafeAccessToken(const FString& Token)
 	return true;
 }
 
+FString SanitizeDisplayName(FString DisplayName)
+{
+	DisplayName.TrimStartAndEndInline();
+	FString Sanitized;
+	Sanitized.Reserve(FMath::Min(DisplayName.Len(), 32));
+	for (const TCHAR Character : DisplayName)
+	{
+		if (Sanitized.Len() >= 32)
+		{
+			break;
+		}
+		if (!FChar::IsControl(Character) && Character != TEXT('\r') && Character != TEXT('\n'))
+		{
+			Sanitized.AppendChar(Character);
+		}
+	}
+	Sanitized.TrimStartAndEndInline();
+	return Sanitized.IsEmpty() ? TEXT("Joueur Steam") : Sanitized;
+}
+
 FString NormalizeTicketPath(const FString& RawPath)
 {
 	FString Path = RawPath.TrimStartAndEnd();
@@ -68,7 +88,21 @@ FString NormalizeTicketPath(const FString& RawPath)
 void UPHMatchmakingGatewaySubsystem::Deinitialize()
 {
 	RequestGeneration = RequestGeneration == MAX_uint64 ? 1 : RequestGeneration + 1;
+	CompletionGeneration = CompletionGeneration == MAX_uint64 ? 1 : CompletionGeneration + 1;
 	ClearHttpAndTickers();
+	CompletionCallback.Unbind();
+	if (CompletionTimeoutTickerHandle.IsValid())
+	{
+		FTSTicker::GetCoreTicker().RemoveTicker(CompletionTimeoutTickerHandle);
+		CompletionTimeoutTickerHandle.Reset();
+	}
+	if (CompletionRequest.IsValid())
+	{
+		CompletionRequest->OnProcessRequestComplete().Unbind();
+		CompletionRequest->CancelRequest();
+		CompletionRequest.Reset();
+	}
+	bCompletionRequestInProgress = false;
 	ClearSensitiveState();
 	Super::Deinitialize();
 }
@@ -146,6 +180,7 @@ bool UPHMatchmakingGatewaySubsystem::BeginTicketAuthentication(
 	const uint64 CallbackGeneration = RequestGeneration;
 	PendingPreference = Preference;
 	PendingLobbyInviteSecret = LobbyInviteSecret;
+	PendingDisplayName = SanitizeDisplayName(Identity->GetPlayerNickname(LocalUserNum));
 	PendingGatewayBaseUrl = NormalizedGatewayUrl;
 	PendingTicketPath = NormalizeTicketPath(TicketPath);
 	bSteamAuthTokenRequestInProgress = true;
@@ -230,6 +265,7 @@ bool UPHMatchmakingGatewaySubsystem::StartTicketRequest(
 	Body->SetStringField(TEXT("ticket_id"), TicketId);
 	Body->SetNumberField(TEXT("protocol_version"), ProtocolVersion);
 	Body->SetStringField(TEXT("build_id"), ResolveBuildId());
+	Body->SetStringField(TEXT("display_name"), PendingDisplayName);
 	if (PendingLobbyInviteSecret.IsEmpty())
 	{
 		Body->SetStringField(TEXT("role_preference"), RolePreference);
@@ -278,6 +314,7 @@ bool UPHMatchmakingGatewaySubsystem::StartTicketRequest(
 		PendingLobbyInviteSecret.IsEmpty() ? 0 : 1,
 		ProtocolVersion);
 	PendingLobbyInviteSecret.Reset();
+	PendingDisplayName.Reset();
 	return true;
 }
 
@@ -554,6 +591,11 @@ void UPHMatchmakingGatewaySubsystem::CancelTicket()
 
 void UPHMatchmakingGatewaySubsystem::CompleteMatchAndReset()
 {
+	CompleteMatchAndReset(FPHGatewayTicketReleaseCallback());
+}
+
+void UPHMatchmakingGatewaySubsystem::CompleteMatchAndReset(FPHGatewayTicketReleaseCallback Callback)
+{
 	const FString CompletedTicketId = TicketId;
 	FString NormalizedGatewayUrl;
 	FString UrlError;
@@ -574,6 +616,7 @@ void UPHMatchmakingGatewaySubsystem::CompleteMatchAndReset()
 
 	if (!bCanNotifyGateway)
 	{
+		Callback.ExecuteIfBound(CompletedTicketId.IsEmpty());
 		return;
 	}
 
@@ -583,17 +626,29 @@ void UPHMatchmakingGatewaySubsystem::CompleteMatchAndReset()
 	{
 		UE_LOG(LogPHMatchmakingGateway, Warning,
 			TEXT("Ready reservation could not be completed because Steam is unavailable; local state was reset."));
+		Callback.ExecuteIfBound(false);
 		return;
 	}
 
 	const FString CompletionUrl = NormalizedGatewayUrl + NormalizeTicketPath(TicketPath)
 		+ TEXT("/") + CompletedTicketId + TEXT("/complete");
+	CompletionGeneration = CompletionGeneration == MAX_uint64 ? 1 : CompletionGeneration + 1;
+	const uint64 CallbackGeneration = CompletionGeneration;
+	CompletionCallback = MoveTemp(Callback);
+	bCompletionRequestInProgress = true;
+	CompletionTimeoutTickerHandle = FTSTicker::GetCoreTicker().AddTicker(
+		FTickerDelegate::CreateUObject(
+			this,
+			&UPHMatchmakingGatewaySubsystem::HandleCompletionTimeout,
+			CallbackGeneration),
+		FMath::Clamp(RequestTimeoutSeconds, 5.0f, 15.0f));
 	Identity->GetLinkedAccountAuthToken(
 		0,
 		SteamGatewayTokenType,
 		IOnlineIdentity::FOnGetLinkedAccountAuthTokenCompleteDelegate::CreateUObject(
 			this,
 			&UPHMatchmakingGatewaySubsystem::HandleCompletionAuthToken,
+			CallbackGeneration,
 			CompletionUrl));
 }
 
@@ -601,13 +656,19 @@ void UPHMatchmakingGatewaySubsystem::HandleCompletionAuthToken(
 	const int32 CallbackLocalUserNum,
 	const bool bWasSuccessful,
 	const FExternalAuthToken& AuthToken,
+	const uint64 CallbackGeneration,
 	FString CompletionUrl)
 {
+	if (CallbackGeneration != CompletionGeneration || !bCompletionRequestInProgress)
+	{
+		return;
+	}
 	if (CallbackLocalUserNum != 0 || !bWasSuccessful
 		|| !AuthToken.HasTokenString() || !IsSafeAccessToken(AuthToken.TokenString))
 	{
 		UE_LOG(LogPHMatchmakingGateway, Warning,
 			TEXT("Ready reservation completion authentication failed; the local frontend remains reset."));
+		FinishCompletionRequest(false);
 		return;
 	}
 
@@ -620,7 +681,7 @@ void UPHMatchmakingGatewaySubsystem::HandleCompletionAuthToken(
 		return;
 	}
 
-	FHttpRequestPtr CompletionRequest = FHttpModule::Get().CreateRequest();
+	CompletionRequest = FHttpModule::Get().CreateRequest();
 	CompletionRequest->SetURL(CompletionUrl);
 	CompletionRequest->SetVerb(TEXT("POST"));
 	CompletionRequest->SetHeader(TEXT("Accept"), TEXT("application/json"));
@@ -629,7 +690,79 @@ void UPHMatchmakingGatewaySubsystem::HandleCompletionAuthToken(
 		TEXT("Authorization"), FString::Printf(TEXT("Bearer %s"), *AuthToken.TokenString));
 	CompletionRequest->SetContentAsString(BodyJson);
 	CompletionRequest->SetTimeout(FMath::Clamp(RequestTimeoutSeconds, 5.0f, 15.0f));
-	CompletionRequest->ProcessRequest();
+	CompletionRequest->OnProcessRequestComplete().BindUObject(
+		this,
+		&UPHMatchmakingGatewaySubsystem::HandleCompletionResponse,
+		CallbackGeneration);
+	if (!CompletionRequest->ProcessRequest())
+	{
+		UE_LOG(LogPHMatchmakingGateway, Warning,
+			TEXT("Ready reservation completion request could not start; the local frontend remains reset."));
+		FinishCompletionRequest(false);
+	}
+}
+
+void UPHMatchmakingGatewaySubsystem::HandleCompletionResponse(
+	FHttpRequestPtr Request,
+	FHttpResponsePtr Response,
+	const bool bConnectedSuccessfully,
+	const uint64 CallbackGeneration)
+{
+	if (CallbackGeneration != CompletionGeneration || !bCompletionRequestInProgress
+		|| Request != CompletionRequest)
+	{
+		return;
+	}
+	const int32 ResponseCode = Response.IsValid() ? Response->GetResponseCode() : 0;
+	const bool bReleased = bConnectedSuccessfully
+		&& (EHttpResponseCodes::IsOk(ResponseCode) || ResponseCode == EHttpResponseCodes::NotFound);
+	if (bReleased)
+	{
+		UE_LOG(LogPHMatchmakingGateway, Display,
+			TEXT("Ready reservation completion finished with HTTP %d."), ResponseCode);
+	}
+	else
+	{
+		UE_LOG(LogPHMatchmakingGateway, Warning,
+			TEXT("Ready reservation completion failed with HTTP %d."), ResponseCode);
+	}
+	FinishCompletionRequest(bReleased);
+}
+
+bool UPHMatchmakingGatewaySubsystem::HandleCompletionTimeout(
+	const float DeltaSeconds,
+	const uint64 CallbackGeneration)
+{
+	(void)DeltaSeconds;
+	CompletionTimeoutTickerHandle.Reset();
+	if (CallbackGeneration == CompletionGeneration && bCompletionRequestInProgress)
+	{
+		UE_LOG(LogPHMatchmakingGateway, Warning,
+			TEXT("Ready reservation completion timed out; allowing the requested local shutdown."));
+		FinishCompletionRequest(false);
+	}
+	return false;
+}
+
+void UPHMatchmakingGatewaySubsystem::FinishCompletionRequest(const bool bSucceeded)
+{
+	if (CompletionTimeoutTickerHandle.IsValid())
+	{
+		FTSTicker::GetCoreTicker().RemoveTicker(CompletionTimeoutTickerHandle);
+		CompletionTimeoutTickerHandle.Reset();
+	}
+	if (CompletionRequest.IsValid())
+	{
+		CompletionRequest->OnProcessRequestComplete().Unbind();
+		if (CompletionRequest->GetStatus() == EHttpRequestStatus::Processing)
+		{
+			CompletionRequest->CancelRequest();
+		}
+		CompletionRequest.Reset();
+	}
+	bCompletionRequestInProgress = false;
+	FPHGatewayTicketReleaseCallback Callback = MoveTemp(CompletionCallback);
+	Callback.ExecuteIfBound(bSucceeded);
 }
 
 void UPHMatchmakingGatewaySubsystem::StartCancelRequest()
@@ -744,6 +877,7 @@ void UPHMatchmakingGatewaySubsystem::ClearSensitiveState()
 	PendingTicketPath.Reset();
 	PendingPlayerAccessToken.Reset();
 	PendingLobbyInviteSecret.Reset();
+	PendingDisplayName.Reset();
 	PendingDeadlineUtc = FDateTime();
 }
 
@@ -757,6 +891,7 @@ void UPHMatchmakingGatewaySubsystem::UpdateLobbySnapshot(const FPHGatewayTicket&
 	LobbySurvivorSlots = Ticket.SurvivorSlots;
 	AssignedSurvivorSlot = Ticket.AssignedSurvivorSlot;
 	OccupiedSurvivorSlots = Ticket.OccupiedSurvivorSlots;
+	SurvivorDisplayNames = Ticket.SurvivorDisplayNames;
 	LobbyCountdownEndsUtc = Ticket.LobbyCountdownEndsUtc;
 	bLobbyLocked = Ticket.bLobbyLocked;
 }
@@ -771,6 +906,7 @@ void UPHMatchmakingGatewaySubsystem::ClearLobbySnapshot()
 	LobbySurvivorSlots = 4;
 	AssignedSurvivorSlot = 0;
 	OccupiedSurvivorSlots.Reset();
+	SurvivorDisplayNames.Reset();
 	LobbyCountdownEndsUtc = FDateTime();
 	bLobbyLocked = false;
 }
@@ -783,6 +919,15 @@ int32 UPHMatchmakingGatewaySubsystem::GetLobbyCountdownSeconds() const
 	}
 	return FMath::Max(0, FMath::CeilToInt(
 		(LobbyCountdownEndsUtc - FDateTime::UtcNow()).GetTotalSeconds()));
+}
+
+FString UPHMatchmakingGatewaySubsystem::GetSurvivorDisplayName(const int32 SurvivorSlot) const
+{
+	if (const FString* DisplayName = SurvivorDisplayNames.Find(SurvivorSlot))
+	{
+		return *DisplayName;
+	}
+	return FString();
 }
 
 int32 UPHMatchmakingGatewaySubsystem::ResolveProtocolVersion() const

@@ -188,6 +188,10 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "PropHunt|Steam")
 	void LeaveSessionAndReturnToLobby();
 
+	/** Closes the Steam connection, releases the NOVA ticket, then quits once both operations finish. */
+	UFUNCTION(BlueprintCallable, Category = "PropHunt|Steam")
+	void LeaveSessionAndQuitGame();
+
 	UFUNCTION(BlueprintCallable, Category = "PropHunt|Results")
 	void LeaveSessionAndShowResults();
 
@@ -308,7 +312,8 @@ private:
 		SearchLobbies,
 		RetryNextLobby,
 		ReturnToResults,
-		ReturnToLobby
+		ReturnToLobby,
+		QuitGame
 	};
 
 	enum class EPHSearchPass : uint8
@@ -328,6 +333,8 @@ private:
 	void BeginDestroySession(EPHPendingAfterDestroy PendingAction);
 	void ReturnToResultsMap();
 	void ReturnToLobbyMap();
+	void HandleQuitGatewayReleaseFinished(bool bSucceeded);
+	void TryFinishRequestedQuit();
 	void HandleCreateSessionComplete(FName SessionName, bool bWasSuccessful);
 	void HandleFindSessionsComplete(bool bWasSuccessful);
 	void HandleJoinSessionComplete(FName SessionName, EOnJoinSessionCompleteResult::Type Result);
@@ -417,6 +424,9 @@ private:
 #endif
 	EPHMatchmakingPreference PendingPreference = EPHMatchmakingPreference::Prop;
 	EPHPendingAfterDestroy PendingAfterDestroy = EPHPendingAfterDestroy::None;
+	bool bQuitRequested = false;
+	bool bQuitSessionFinished = false;
+	bool bQuitGatewayFinished = false;
 
 	FDelegateHandle CreateSessionDelegateHandle;
 	FDelegateHandle FindSessionsDelegateHandle;

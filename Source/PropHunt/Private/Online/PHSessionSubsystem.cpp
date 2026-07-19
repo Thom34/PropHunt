@@ -9,6 +9,7 @@
 #include "Engine/World.h"
 #include "GameFramework/PlayerController.h"
 #include "Kismet/GameplayStatics.h"
+#include "Kismet/KismetSystemLibrary.h"
 #include "Misc/CommandLine.h"
 #include "Misc/DateTime.h"
 #include "Misc/PackageName.h"
@@ -380,6 +381,14 @@ void UPHSessionSubsystem::JoinSuggestedLobby()
 
 void UPHSessionSubsystem::LeaveSessionAndReturnToLobby()
 {
+	if (UGameInstance* GameInstance = GetGameInstance())
+	{
+		if (UPHMatchmakingGatewaySubsystem* Gateway =
+			GameInstance->GetSubsystem<UPHMatchmakingGatewaySubsystem>())
+		{
+			Gateway->CompleteMatchAndReset();
+		}
+	}
 	SetMatchmakingState(EPHMatchmakingState::Leaving);
 	IOnlineSessionPtr Sessions = GetSessionInterface();
 	if (!Sessions.IsValid() || Sessions->GetNamedSession(NAME_GameSession) == nullptr)
@@ -389,6 +398,63 @@ void UPHSessionSubsystem::LeaveSessionAndReturnToLobby()
 	}
 
 	BeginDestroySession(EPHPendingAfterDestroy::ReturnToLobby);
+}
+
+void UPHSessionSubsystem::LeaveSessionAndQuitGame()
+{
+	if (bQuitRequested)
+	{
+		return;
+	}
+	bQuitRequested = true;
+	bQuitSessionFinished = false;
+	bQuitGatewayFinished = false;
+	SetMatchmakingState(EPHMatchmakingState::Leaving);
+
+	if (UGameInstance* GameInstance = GetGameInstance())
+	{
+		if (UPHMatchmakingGatewaySubsystem* Gateway =
+			GameInstance->GetSubsystem<UPHMatchmakingGatewaySubsystem>())
+		{
+			Gateway->CompleteMatchAndReset(
+				FPHGatewayTicketReleaseCallback::CreateUObject(
+					this, &UPHSessionSubsystem::HandleQuitGatewayReleaseFinished));
+		}
+		else
+		{
+			bQuitGatewayFinished = true;
+		}
+	}
+	else
+	{
+		bQuitGatewayFinished = true;
+	}
+
+	BeginDestroySession(EPHPendingAfterDestroy::QuitGame);
+}
+
+void UPHSessionSubsystem::HandleQuitGatewayReleaseFinished(const bool bSucceeded)
+{
+	bQuitGatewayFinished = true;
+	if (!bSucceeded)
+	{
+		UE_LOG(LogPHSteam, Warning,
+			TEXT("NOVA ticket release did not confirm before quit; backend expiry remains the safety net."));
+	}
+	TryFinishRequestedQuit();
+}
+
+void UPHSessionSubsystem::TryFinishRequestedQuit()
+{
+	if (!bQuitRequested || !bQuitSessionFinished || !bQuitGatewayFinished)
+	{
+		return;
+	}
+	bQuitRequested = false;
+	APlayerController* PlayerController = GetGameInstance() != nullptr
+		? GetGameInstance()->GetFirstLocalPlayerController(GetWorld())
+		: nullptr;
+	UKismetSystemLibrary::QuitGame(this, PlayerController, EQuitPreference::Quit, false);
 }
 
 void UPHSessionSubsystem::LeaveSessionAndShowResults()
@@ -1149,6 +1215,10 @@ void UPHSessionSubsystem::HandleDestroySessionComplete(const FName SessionName, 
 		break;
 	case EPHPendingAfterDestroy::ReturnToLobby:
 		ReturnToLobbyMap();
+		break;
+	case EPHPendingAfterDestroy::QuitGame:
+		bQuitSessionFinished = true;
+		TryFinishRequestedQuit();
 		break;
 	case EPHPendingAfterDestroy::None:
 	default:

@@ -29,6 +29,7 @@ struct FPHGatewayTicket
 	int32 SurvivorSlots = 4;
 	int32 AssignedSurvivorSlot = 0;
 	TArray<int32> OccupiedSurvivorSlots;
+	TMap<int32, FString> SurvivorDisplayNames;
 	bool bHasLobby = false;
 	bool bLobbyLocked = false;
 	float RetryAfterSeconds = 0.5f;

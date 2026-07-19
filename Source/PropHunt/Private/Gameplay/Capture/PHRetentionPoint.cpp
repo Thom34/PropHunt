@@ -238,6 +238,7 @@ bool APHRetentionPoint::CanRescuerRelease(const APHPropCharacter& Rescuer) const
 		&& RetainedProp != &Rescuer
 		&& RescuerState != nullptr
 		&& RescuerState->GetPlayerRole() == EPHPlayerRole::Prop
+		&& Rescuer.GetActivePropForm() == nullptr
 		&& (Phase == EPHMatchPhase::Hunt || Phase == EPHMatchPhase::Escape)
 		&& Rescuer.CanPerformCaptureRescue()
 		&& FVector::DistSquared(Rescuer.GetActorLocation(), GetActorLocation())

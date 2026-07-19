@@ -15,6 +15,7 @@ DECLARE_DELEGATE_ThreeParams(
 	bool,
 	const FString&,
 	const FString&);
+DECLARE_DELEGATE_OneParam(FPHGatewayTicketReleaseCallback, bool);
 
 UENUM(BlueprintType)
 enum class EPHGatewayMatchmakingState : uint8
@@ -66,6 +67,9 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "PropHunt|Matchmaking")
 	void CompleteMatchAndReset();
 
+	/** Native completion variant used when the caller must keep the process alive until NOVA answers. */
+	void CompleteMatchAndReset(FPHGatewayTicketReleaseCallback Callback);
+
 	UFUNCTION(BlueprintPure, Category = "PropHunt|Matchmaking")
 	EPHGatewayMatchmakingState GetState() const { return State; }
 
@@ -97,6 +101,9 @@ public:
 	int32 GetAssignedSurvivorSlot() const { return AssignedSurvivorSlot; }
 
 	UFUNCTION(BlueprintPure, Category = "PropHunt|Matchmaking")
+	FString GetSurvivorDisplayName(int32 SurvivorSlot) const;
+
+	UFUNCTION(BlueprintPure, Category = "PropHunt|Matchmaking")
 	int32 GetLobbyCountdownSeconds() const;
 
 	UFUNCTION(BlueprintPure, Category = "PropHunt|Matchmaking")
@@ -125,8 +132,15 @@ private:
 		int32 CallbackLocalUserNum,
 		bool bWasSuccessful,
 		const FExternalAuthToken& AuthToken,
+		uint64 CallbackGeneration,
 		FString CompletionUrl);
+	void HandleCompletionResponse(
+		FHttpRequestPtr Request,
+		FHttpResponsePtr Response,
+		bool bConnectedSuccessfully,
+		uint64 CallbackGeneration);
 	bool HandleSteamAuthTimeout(float DeltaSeconds, uint64 CallbackGeneration);
+	bool HandleCompletionTimeout(float DeltaSeconds, uint64 CallbackGeneration);
 	bool StartTicketRequest(EPHMatchmakingPreference Preference, const FString& PlayerAccessToken);
 	bool BeginTicketAuthentication(
 		EPHMatchmakingPreference Preference,
@@ -154,6 +168,7 @@ private:
 	void BestEffortCancelActiveTicket();
 	void ClearHttpAndTickers();
 	void ClearSensitiveState();
+	void FinishCompletionRequest(bool bSucceeded);
 	void UpdateLobbySnapshot(const FPHGatewayTicket& Ticket);
 	void ClearLobbySnapshot();
 	int32 ResolveProtocolVersion() const;
@@ -174,10 +189,14 @@ private:
 
 	FHttpRequestPtr ActiveRequest;
 	FHttpRequestPtr LobbyInviteRequest;
+	FHttpRequestPtr CompletionRequest;
 	FPHLobbyInviteTokenCallback LobbyInviteTokenCallback;
+	FPHGatewayTicketReleaseCallback CompletionCallback;
 	FTSTicker::FDelegateHandle SteamAuthTimeoutTickerHandle;
 	FTSTicker::FDelegateHandle PollTickerHandle;
+	FTSTicker::FDelegateHandle CompletionTimeoutTickerHandle;
 	uint64 RequestGeneration = 0;
+	uint64 CompletionGeneration = 0;
 	EPHGatewayMatchmakingState State = EPHGatewayMatchmakingState::Idle;
 	EPHMatchmakingPreference PendingPreference = EPHMatchmakingPreference::Random;
 	FString TicketId;
@@ -185,6 +204,7 @@ private:
 	FString PendingTicketPath;
 	FString PendingPlayerAccessToken;
 	FString PendingLobbyInviteSecret;
+	FString PendingDisplayName;
 	FDateTime PendingDeadlineUtc;
 	FDateTime LobbyCountdownEndsUtc;
 	EPHPlayerRole LobbyAssignedRole = EPHPlayerRole::Unassigned;
@@ -194,8 +214,10 @@ private:
 	int32 LobbySurvivorSlots = 4;
 	int32 AssignedSurvivorSlot = 0;
 	TArray<int32> OccupiedSurvivorSlots;
+	TMap<int32, FString> SurvivorDisplayNames;
 	bool bHasLobbySnapshot = false;
 	bool bLobbyLocked = false;
 	bool bSteamAuthTokenRequestInProgress = false;
+	bool bCompletionRequestInProgress = false;
 	bool bClientUpdateRequired = false;
 };

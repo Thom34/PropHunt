@@ -303,6 +303,11 @@ void UPHHumanStaminaWidget::NativeTick(const FGeometry& MyGeometry, const float 
 	const APHPlayerController* PHController = Cast<APHPlayerController>(OwningController);
 	const bool bShowSpectator = PHCaptureFlow::IsTerminal(CaptureState);
 	const bool bShowDownedRecovery = CaptureState == EPHPropCaptureState::Downed;
+	const APHPropCharacter* AssistedDownedProp = PropCharacter != nullptr
+		? PropCharacter->GetAssistedDownedProp()
+		: nullptr;
+	const bool bShowAssistedRecovery = AssistedDownedProp != nullptr
+		&& AssistedDownedProp->GetCaptureState() == EPHPropCaptureState::Downed;
 	const bool bShowCarryStruggle = CaptureState == EPHPropCaptureState::Carried;
 	const bool bShowRetentionRescue = PropCharacter != nullptr
 		&& PropCharacter->IsReleasingRetainedProp();
@@ -331,10 +336,12 @@ void UPHHumanStaminaWidget::NativeTick(const FGeometry& MyGeometry, const float 
 	}
 	if (DownedRecoveryBar != nullptr)
 	{
-		DownedRecoveryBar->SetRenderOpacity(bShowDownedRecovery ? 1.0f : 0.0f);
-		DownedRecoveryBar->SetPercent(PropCharacter != nullptr
-			? PropCharacter->GetDownedRecoveryProgressNormalized()
-			: 0.0f);
+		DownedRecoveryBar->SetRenderOpacity((bShowDownedRecovery || bShowAssistedRecovery) ? 1.0f : 0.0f);
+		DownedRecoveryBar->SetPercent(bShowAssistedRecovery
+			? AssistedDownedProp->GetDownedRecoveryProgressNormalized()
+			: PropCharacter != nullptr
+				? PropCharacter->GetDownedRecoveryProgressNormalized()
+				: 0.0f);
 	}
 	if (CarryStruggleBar != nullptr)
 	{
@@ -346,7 +353,8 @@ void UPHHumanStaminaWidget::NativeTick(const FGeometry& MyGeometry, const float 
 	if (CaptureProgressLabel != nullptr)
 	{
 		CaptureProgressLabel->SetRenderOpacity(
-			(bShowGenericProgress || bShowDownedRecovery || bShowCarryStruggle || bShowSpectator) ? 1.0f : 0.0f);
+			(bShowGenericProgress || bShowDownedRecovery || bShowAssistedRecovery
+				|| bShowCarryStruggle || bShowSpectator) ? 1.0f : 0.0f);
 		if (bShowSpectator)
 		{
 			const TCHAR* TerminalPrefix = CaptureState == EPHPropCaptureState::Escaped ? TEXT("ECHAPPE") : TEXT("ELIMINE");
@@ -370,6 +378,10 @@ void UPHHumanStaminaWidget::NativeTick(const FGeometry& MyGeometry, const float 
 				? FString::Printf(TEXT("SOINS / RECUPERATION  +%d ALLIE(S)"), HelperCount)
 				: FString(TEXT("SOINS / RECUPERATION"));
 			CaptureProgressLabel->SetText(FText::FromString(RecoveryLabel));
+		}
+		else if (bShowAssistedRecovery)
+		{
+			CaptureProgressLabel->SetText(FText::FromString(TEXT("SOINS DE L'ALLIE - MAINTIENS CLIC")));
 		}
 		else if (bShowExitGateProgress)
 		{

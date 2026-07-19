@@ -10,6 +10,14 @@ class UBoxComponent;
 class USceneComponent;
 class UStaticMeshComponent;
 
+namespace PHExitGateFlow
+{
+	inline bool HasReachedOpenThreshold(const float Progress)
+	{
+		return Progress >= 1.0f - KINDA_SMALL_NUMBER;
+	}
+}
+
 UCLASS(Blueprintable)
 class PROPHUNT_API APHExitGate : public AActor
 {

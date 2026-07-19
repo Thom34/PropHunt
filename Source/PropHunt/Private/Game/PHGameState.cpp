@@ -1,5 +1,7 @@
 #include "Game/PHGameState.h"
 
+#include "Game/PHPlayerController.h"
+#include "Engine/World.h"
 #include "Net/UnrealNetwork.h"
 
 DEFINE_LOG_CATEGORY_STATIC(LogPHGameState, Log, All);
@@ -144,4 +146,16 @@ void APHGameState::OnRep_MatchStateChanged()
 void APHGameState::OnRep_MatchResultsSnapshot()
 {
 	BP_OnMatchResultsChanged();
+
+	// The reliable controller RPC remains the primary path. Replication gives
+	// clients a second authoritative route if the connection closes while the
+	// dedicated worker is returning to its waiting room.
+	if (MatchResultsSnapshot.bFinalized && GetWorld() != nullptr)
+	{
+		if (APHPlayerController* LocalController =
+			Cast<APHPlayerController>(GetWorld()->GetFirstPlayerController()))
+		{
+			LocalController->HandleReplicatedFinalResults(MatchResultsSnapshot);
+		}
+	}
 }

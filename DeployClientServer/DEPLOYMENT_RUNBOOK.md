@@ -20,6 +20,11 @@ Il s'applique au projet `C:\Users\Thomas\Documents\Unreal Projects\PropHunt\Prop
 Gateway, NOVA, serveur Linux et client Steam beta sont publiés. Le test humain final à deux comptes reste une
 gate distincte et ne doit pas être déduit du succès de SteamPipe.
 
+Cette table décrit la publication active, pas le checkout actuel. Les sources locales ont changé après ce
+BuildID ; avant tout nouveau build/push Shipping, incrémenter vers `0.1.1907002` ou supérieur. Le nouveau contrat
+lobby `display_name/survivor_players` exige un déploiement gateway + serveur/NOVA avant Steam ; l'ancienne gateway
+refuse le nouveau champ strict avec `HTTP 400 invalid_contract`.
+
 ## Résumé en une commande
 
 Après la préparation locale Steam décrite plus bas :
@@ -30,11 +35,11 @@ Après la préparation locale Steam décrite plus bas :
 
 L'ordre est imposé :
 
-1. contrôle de version ;
-2. build/cook client et serveur ;
-3. déploiement VPS coordonné gateway + release Linux + route NOVA ;
-4. contrôle `/healthz` ;
-5. publication du client Steam `beta` en dernier.
+1. gate complète version/scripts/gateway/Unreal ;
+2. build/cook client et serveur puis validation des deux packages ;
+3. déploiement VPS coordonné gateway + unité systemd + release Linux + route NOVA ;
+4. contrôle `/healthz`, permissions, tickets et outboxes ;
+5. nouvelle lecture du health exact puis publication du client Steam `beta` en dernier.
 
 Un échec avant Steam arrête le pipeline. Le client n'est donc jamais publié vers un plan de contrôle qui n'est
 pas prêt à accepter exactement sa version.
@@ -113,8 +118,11 @@ branche privée `beta`.
 | Bundle de transfert VPS | `package/vps-bundle` |
 | Logs SteamPipe | `Saved/SteamBuildOutput` |
 | Anciennes générations de bundle | `Saved/Deployments/bundle-backups` |
+| Provenance du build | `package/client/build-provenance.json`, `package/server/build-provenance.json` |
 
 Ne jamais choisir manuellement un ancien dossier `phase*`, `final*` ou daté comme source de publication.
+Un package sans provenance, ou dont l'empreinte ne correspond plus aux sources/config/assets/gateway courants,
+est refusé même si son numéro de version est correct.
 
 Le paramètre `-BundleMode` contrôle le bundle VPS :
 
@@ -128,18 +136,18 @@ Les SHA-256 sont recalculés localement avant SCP puis revérifiés sur Debian.
 
 `Push-Coordinated-Vps.ps1` réalise une transaction opérationnelle bornée :
 
-1. exécute le garde de version et les tests gateway locaux ;
-2. refuse si un worker `PropHuntServer` est actif ;
+1. exécute la gate release et les tests gateway/Unreal ;
+2. refuse si un worker, ticket actif, allocation ou annulation PropHunt est présent ;
 3. vérifie que le contrat NOVA versionné est déjà installé ;
 4. arrête seulement `prophunt-gateway` ;
-5. sauvegarde `/opt/prophunt-gateway`, les configurations gateway/NOVA et la base SQLite ;
-6. installe le paquet Python gateway et configure protocole + `project_build_id` ;
+5. sauvegarde `/opt/prophunt-gateway`, l'unité systemd, les configurations gateway/NOVA et la base SQLite ;
+6. installe paquet Python + unité systemd, configure protocole/build et attend le socket NOVA jusqu'à `30 s` ;
 7. laisse la gateway arrêtée pendant l'installation du serveur ;
 8. transfère le bundle, valide ses hashes, ses modes Linux, son ELF, Steamworks et ses dépendances ;
 9. active `/home/ue-game/releases/<nova_release_name>` avec une release de rollback ;
 10. remplace l'unique route `build-prophunt*` dans `/etc/nova-orchestrator/config.toml` ;
 11. valide le TOML, redémarre uniquement `nova-orchestrator` et attend son socket ;
-12. redémarre la gateway et exige un `/healthz` correspondant exactement à la version ;
+12. redémarre la gateway, exige un `/healthz` exact puis recontrôle permissions, tickets et outboxes ;
 13. conserve la sauvegarde sous `/home/ue-game/backups/prophunt-<deployment_id>`.
 
 Le module ne redémarre pas nginx, MariaDB, `nova-worker-broker` ou les services d'un autre jeu. Il ne modifie pas
@@ -153,15 +161,13 @@ elle n'est plus routée ; c'est sûr et utile pour le diagnostic.
 
 ```powershell
 .\DeployClientServer\Deploy-All.cmd -Module Validate
-
-$env:PYTHONPATH = (Resolve-Path '.\SourceArt\Deploy\PropHuntGateway').Path
-python -m unittest discover -s '.\SourceArt\Deploy\PropHuntGateway\tests' -v
-Remove-Item Env:PYTHONPATH
-
 .\DeployClientServer\Deploy-All.cmd -Module Build -FullCook
-.\BuildTools\Steam\Test-PropHuntSteamPackage.ps1
 .\DeployClientServer\Deploy-All.cmd -Module All -PlanOnly
 ```
+
+`Validate` exécute désormais à lui seul compilation Python, `37/37` tests gateway, toute l'automation
+`PropHunt.*`, cohérence de version, syntaxe PowerShell, contrat systemd et `git diff --check`. Ne jamais utiliser
+`-SkipGatewayTests` ou `-SkipUnrealTests` sur le candidat final.
 
 Pour une modification du contrat NOVA lui-même, le changement doit d'abord passer sa suite ciblée et la suite
 MariaDB NOVA. Le module VPS coordonné vérifie la présence du contrat versionné mais n'applique pas silencieusement
@@ -197,10 +203,14 @@ un nouveau manifest ; ne jamais recopier les identifiants de la release précéd
 Avec deux comptes Steam réellement mis à jour : invitation ou inscription, même salon, countdown, allocation,
 WaitingRoom, gameplay, Results, retour menu, nouvelle inscription, puis arrêt du worker et libération des ports.
 Ce test reste une gate humaine : l'automatisation ne doit pas le déclarer réussi à la place des joueurs.
+Le scénario détaillé incluant sortie de file, soin, objectif, porte, Results et réinscription est dans
+`SourceArt/Docs/24_RELEASE_QUALITY_GATE.md`.
 
 ## Diagnostic rapide
 
 - `client_update_required` : comparer la version client, `/healthz` et la route NOVA.
+- `HTTP 400 invalid_contract` dès l'inscription : vérifier si un nouveau client `display_name` pointe encore vers
+  la gateway `0.1.1907001`; déployer coordonné, ne pas retirer le champ pour contourner le schéma.
 - bundle refusé car existant : utiliser `-BundleMode Auto` ou `Regenerate`, jamais supprimer au hasard.
 - permission sous `/home/ue-game/releases` : le script d'activation doit passer par `sudo -n`.
 - bits exécutables absents : le push normalise les modes après extraction Windows.

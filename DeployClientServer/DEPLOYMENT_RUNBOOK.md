@@ -190,6 +190,11 @@ elle n'est plus routée ; c'est sûr et utile pour le diagnostic.
 `PropHunt.*`, cohérence de version, syntaxe PowerShell, contrat systemd et `git diff --check`. Ne jamais utiliser
 `-SkipGatewayTests` ou `-SkipUnrealTests` sur le candidat final.
 
+`Deploy-All` exécute cette gate une seule fois puis transmet explicitement aux modules internes que les tests
+runtime sont déjà acquis. Les commandes unitaires restent autonomes et gardent leurs propres contrôles. La
+génération du bundle calcule SHA-256 avec l'API .NET afin de fonctionner aussi depuis le PowerShell minimal des
+lanceurs `.cmd`, sans dépendre du chargement implicite de `Microsoft.PowerShell.Utility`.
+
 Pour une modification du contrat NOVA lui-même, le changement doit d'abord passer sa suite ciblée et la suite
 MariaDB NOVA. Le module VPS coordonné vérifie la présence du contrat versionné mais n'applique pas silencieusement
 un nouveau patch d'infrastructure.

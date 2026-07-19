@@ -44,7 +44,11 @@ function Invoke-Build {
 }
 
 function Invoke-Vps {
-    & (Join-Path $scriptRoot 'Push-Coordinated-Vps.ps1') -BundleMode $BundleMode -PlanOnly:$PlanOnly -SkipReadiness
+    & (Join-Path $scriptRoot 'Push-Coordinated-Vps.ps1') `
+        -BundleMode $BundleMode `
+        -PlanOnly:$PlanOnly `
+        -SkipReadiness `
+        -SkipGatewayTests
 }
 
 function Invoke-ServerOnly {

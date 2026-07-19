@@ -156,6 +156,24 @@ function Get-TarEntries {
     return $entries
 }
 
+function Get-Sha256Hex {
+    param([Parameter(Mandatory = $true)][string]$Path)
+
+    $stream = [System.IO.File]::OpenRead($Path)
+    try {
+        $algorithm = [System.Security.Cryptography.SHA256]::Create()
+        try {
+            return [System.BitConverter]::ToString($algorithm.ComputeHash($stream)).Replace('-', '').ToLowerInvariant()
+        }
+        finally {
+            $algorithm.Dispose()
+        }
+    }
+    finally {
+        $stream.Dispose()
+    }
+}
+
 function Assert-ArchiveEntry {
     param(
         [Parameter(Mandatory = $true)][string[]]$Entries,
@@ -209,8 +227,8 @@ if (-not $isNovaRelease) {
     Assert-ArchiveEntry -Entries $opsEntries -ExpectedEntry 'prophunt-server.service' -ArchiveLabel 'Archive ops'
 }
 
-$serverHash = Get-FileHash -LiteralPath $serverArchive -Algorithm SHA256
-$opsHash = Get-FileHash -LiteralPath $opsArchive -Algorithm SHA256
+$serverHash = Get-Sha256Hex -Path $serverArchive
+$opsHash = Get-Sha256Hex -Path $opsArchive
 $serverInfo = Get-Item -LiteralPath $serverArchive
 $opsInfo = Get-Item -LiteralPath $opsArchive
 
@@ -227,14 +245,14 @@ $manifest = [ordered]@{
     server = [ordered]@{
         archive = $serverInfo.Name
         bytes = $serverInfo.Length
-        sha256 = $serverHash.Hash.ToLowerInvariant()
+        sha256 = $serverHash
         binary = $serverBinaryRelative
         extractTo = if ($isNovaRelease) { "/home/ue-game/releases/$NovaReleaseName" } else { '/opt/prophunt/server' }
     }
     operations = [ordered]@{
         archive = $opsInfo.Name
         bytes = $opsInfo.Length
-        sha256 = $opsHash.Hash.ToLowerInvariant()
+        sha256 = $opsHash
         extractTo = if ($isNovaRelease) { "/home/ue-game/releases/$NovaReleaseName/ops" } else { '/opt/prophunt/ops' }
     }
     requiredRuntime = if ($isNovaRelease) { '/home/ue-game/steamcmd/linux64/steamclient.so' } else { '/opt/steamcmd/linux64/steamclient.so' }
@@ -251,8 +269,8 @@ $manifestJson = $manifest | ConvertTo-Json -Depth 6
 [System.IO.File]::WriteAllText($manifestPath, $manifestJson + "`n", $utf8NoBom)
 
 $checksumLines = @(
-    "$($serverHash.Hash.ToLowerInvariant())  $($serverInfo.Name)",
-    "$($opsHash.Hash.ToLowerInvariant())  $($opsInfo.Name)"
+    "$serverHash  $($serverInfo.Name)",
+    "$opsHash  $($opsInfo.Name)"
 )
 [System.IO.File]::WriteAllText($checksumPath, ($checksumLines -join "`n") + "`n", $utf8NoBom)
 

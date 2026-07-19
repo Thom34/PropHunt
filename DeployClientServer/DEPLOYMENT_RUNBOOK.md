@@ -237,6 +237,9 @@ Le scénario détaillé incluant sortie de file, soin, objectif, porte, Results 
 - bits exécutables absents : le push normalise les modes après extraction Windows.
 - gateway inactive après NOVA : vérifier le socket `/run/nova-orchestrator/api.sock`, puis les journaux des deux
   services ; ne pas redémarrer toute la machine.
+- `cp: cannot stat '<sas>/*.py'` pendant la préparation coordonnée : le glob distant a été cité comme un littéral.
+  Le script versionné doit utiliser `"${upload}/"*.py`; son rollback attend désormais jusqu'à `30 s` le socket
+  NOVA puis le health gateway afin de ne pas signaler un faux échec pendant le redémarrage.
 - SteamCMD absent : préparer les deux fichiers privés locaux, sans modifier le VDF ni emprunter le script d'un
   autre projet.
 

@@ -121,7 +121,7 @@ if [[ -f /var/lib/prophunt-gateway/tickets.sqlite3 ]]; then
   cp -a /var/lib/prophunt-gateway/tickets.sqlite3 "${backup}/tickets.sqlite3"
 fi
 
-cp -a "${upload}/"'*.py' /opt/prophunt-gateway/prophunt_gateway/
+cp -a "${upload}/"*.py /opt/prophunt-gateway/prophunt_gateway/
 find /opt/prophunt-gateway/prophunt_gateway -maxdepth 1 -type f -name '*.py' -exec chmod 0644 {} +
 chown -R root:root /opt/prophunt-gateway/prophunt_gateway
 install -o root -g root -m 0644 "${upload}/prophunt-gateway.service" /etc/systemd/system/prophunt-gateway.service
@@ -245,8 +245,17 @@ for ((attempt=0; attempt<30; attempt++)); do
   [[ -S /run/nova-orchestrator/api.sock ]] && break
   sleep 1
 done
+[[ -S /run/nova-orchestrator/api.sock ]]
 systemctl start prophunt-gateway
-curl -fsS http://127.0.0.1:8790/healthz
+health=''
+for ((attempt=0; attempt<30; attempt++)); do
+  if health="$(curl -fsS http://127.0.0.1:8790/healthz 2>/dev/null)"; then
+    break
+  fi
+  sleep 1
+done
+[[ -n "${health}" ]]
+printf '%s\n' "${health}"
 printf '\n[ROLLBACK] Plan de contrôle précédent restauré depuis %s.\n' "${backup}"
 '@
 

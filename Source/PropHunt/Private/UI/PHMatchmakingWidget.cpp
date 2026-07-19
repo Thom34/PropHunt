@@ -524,7 +524,7 @@ void UPHMatchmakingWidget::NativeOnInitialized()
 		ReadyIconsSlot->SetAnchors(FAnchors(0.0f, 1.0f));
 		ReadyIconsSlot->SetAlignment(FVector2D(0.0f, 1.0f));
 		ReadyIconsSlot->SetPosition(FVector2D(24.0f, -24.0f));
-		ReadyIconsSlot->SetSize(FVector2D(500.0f, 96.0f));
+		ReadyIconsSlot->SetSize(FVector2D(600.0f, 108.0f));
 		ReadyIconsSlot->SetZOrder(20);
 	}
 	LobbySurvivorReadyIcons.Reset();
@@ -536,14 +536,16 @@ void UPHMatchmakingWidget::NativeOnInitialized()
 		SurvivorReadyBrush.SetResourceObject(SurvivorRoleIcon);
 		SurvivorReadyBrush.DrawAs = ESlateBrushDrawType::Image;
 		SurvivorReadyBrush.ImageSize = FVector2D(76.0f, 76.0f);
-		SurvivorReadyBrush.SetUVRegion(FBox2f(FVector2f(0.32f, 0.32f), FVector2f(0.68f, 0.68f)));
+		SurvivorReadyBrush.SetUVRegion(FBox2f(FVector2f(0.30f, 0.20f), FVector2f(0.70f, 0.72f)));
 		SurvivorIcon->SetBrush(SurvivorReadyBrush);
 		SurvivorIcon->SetDesiredSizeOverride(FVector2D(76.0f, 76.0f));
 		SurvivorIcon->SetColorAndOpacity(FLinearColor(0.40f, 0.86f, 1.0f, 1.0f));
 		SurvivorIcon->SetVisibility(ESlateVisibility::Collapsed);
 		if (UHorizontalBoxSlot* SurvivorIconSlot = ReadyIcons->AddChildToHorizontalBox(SurvivorIcon))
 		{
-			SurvivorIconSlot->SetPadding(FMargin(3.0f, 0.0f));
+			// Keep the original roster-slot footprint while drawing the portrait
+			// itself 20% smaller and centered inside that stable space.
+			SurvivorIconSlot->SetPadding(FMargin(10.0f, 0.0f));
 			SurvivorIconSlot->SetVerticalAlignment(VAlign_Center);
 		}
 		LobbySurvivorReadyIcons.Add(SurvivorIcon);
@@ -554,14 +556,14 @@ void UPHMatchmakingWidget::NativeOnInitialized()
 	HunterReadyBrush.SetResourceObject(KillerRoleIcon);
 	HunterReadyBrush.DrawAs = ESlateBrushDrawType::Image;
 	HunterReadyBrush.ImageSize = FVector2D(86.0f, 86.0f);
-	HunterReadyBrush.SetUVRegion(FBox2f(FVector2f(0.32f, 0.32f), FVector2f(0.68f, 0.68f)));
+	HunterReadyBrush.SetUVRegion(FBox2f(FVector2f(0.30f, 0.20f), FVector2f(0.70f, 0.72f)));
 	LobbyHunterReadyIcon->SetBrush(HunterReadyBrush);
 	LobbyHunterReadyIcon->SetDesiredSizeOverride(FVector2D(86.0f, 86.0f));
 	LobbyHunterReadyIcon->SetColorAndOpacity(FLinearColor(1.0f, 0.30f, 0.22f, 1.0f));
 	LobbyHunterReadyIcon->SetVisibility(ESlateVisibility::Collapsed);
 	if (UHorizontalBoxSlot* HunterReadySlot = ReadyIcons->AddChildToHorizontalBox(LobbyHunterReadyIcon))
 	{
-		HunterReadySlot->SetPadding(FMargin(16.0f, 0.0f, 2.0f, 0.0f));
+		HunterReadySlot->SetPadding(FMargin(27.0f, 0.0f, 11.0f, 0.0f));
 		HunterReadySlot->SetVerticalAlignment(VAlign_Center);
 	}
 

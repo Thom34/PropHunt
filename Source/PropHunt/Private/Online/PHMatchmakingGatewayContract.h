@@ -56,6 +56,12 @@ namespace PHMatchmakingGatewayContract
 
 	PROPHUNT_API bool IsSafeLobbyInviteSecret(const FString& InviteSecret);
 
+	/** Parses the gateway's bounded public error envelope without trusting server-provided text. */
+	PROPHUNT_API bool ParsePublicErrorResponse(
+		const FString& Json,
+		FString& OutCode,
+		FString& OutMessage);
+
 	PROPHUNT_API bool ParseLobbyInviteResponse(
 		const FString& Json,
 		int32 ExpectedProtocolVersion,

@@ -18,7 +18,7 @@ DEFINE_LOG_CATEGORY_STATIC(LogPHMatchmakingGateway, Log, All);
 
 namespace
 {
-const FName SteamSubsystemName(TEXT("STEAM"));
+const FName GatewaySteamSubsystemName(TEXT("STEAM"));
 const FString SteamGatewayTokenType(TEXT("WebAPI:PropHuntGateway"));
 
 FString ResolveGatewayBaseUrl(const FString& ConfiguredBaseUrl)
@@ -130,7 +130,7 @@ bool UPHMatchmakingGatewaySubsystem::BeginTicketAuthentication(
 		return false;
 	}
 
-	IOnlineSubsystem* SteamSubsystem = IOnlineSubsystem::Get(SteamSubsystemName);
+	IOnlineSubsystem* SteamSubsystem = IOnlineSubsystem::Get(GatewaySteamSubsystemName);
 	const IOnlineIdentityPtr Identity = SteamSubsystem ? SteamSubsystem->GetIdentityInterface() : nullptr;
 	if (!Identity.IsValid() || Identity->GetLoginStatus(LocalUserNum) != ELoginStatus::LoggedIn)
 	{
@@ -378,11 +378,26 @@ void UPHMatchmakingGatewaySubsystem::HandleTicketResponse(
 	const int32 ExpectedStatus = bWasPollRequest || bWasCancelRequest ? 200 : 202;
 	if (Response->GetResponseCode() != ExpectedStatus)
 	{
+		FString PublicErrorCode;
+		FString PublicErrorMessage;
+		const bool bHasPublicError = PHMatchmakingGatewayContract::ParsePublicErrorResponse(
+			Response->GetContentAsString(), PublicErrorCode, PublicErrorMessage);
+		if (Response->GetResponseCode() == 409
+			&& bHasPublicError
+			&& PublicErrorCode == TEXT("client_update_required"))
+		{
+			bClientUpdateRequired = true;
+			FinishFailure(TEXT("Client obsolète : relance Steam et mets à jour Prop Caper."));
+			return;
+		}
 		FinishFailure(FString::Printf(
-			TEXT("La gateway matchmaking a refusé la requête (HTTP %d)."),
-			Response->GetResponseCode()));
+			TEXT("La gateway matchmaking a refusé la requête (HTTP %d%s%s)."),
+			Response->GetResponseCode(),
+			bHasPublicError ? TEXT(" — ") : TEXT(""),
+			bHasPublicError ? *PublicErrorCode : TEXT("")));
 		return;
 	}
+	bClientUpdateRequired = false;
 	if (bWasCancelRequest)
 	{
 		ClearSensitiveState();
@@ -562,7 +577,7 @@ void UPHMatchmakingGatewaySubsystem::CompleteMatchAndReset()
 		return;
 	}
 
-	IOnlineSubsystem* SteamSubsystem = IOnlineSubsystem::Get(SteamSubsystemName);
+	IOnlineSubsystem* SteamSubsystem = IOnlineSubsystem::Get(GatewaySteamSubsystemName);
 	const IOnlineIdentityPtr Identity = SteamSubsystem ? SteamSubsystem->GetIdentityInterface() : nullptr;
 	if (!Identity.IsValid() || Identity->GetLoginStatus(0) != ELoginStatus::LoggedIn)
 	{

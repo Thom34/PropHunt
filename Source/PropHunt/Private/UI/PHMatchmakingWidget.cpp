@@ -82,6 +82,19 @@ void ApplyRoundedBorderStyle(
 	Border.SetBrush(Brush);
 }
 
+void ApplyRoundedAvatarBrush(UImage& Image, UTexture2D* Texture)
+{
+	FSlateBrush Brush;
+	Brush.SetResourceObject(Texture);
+	Brush.ImageSize = FVector2D(52.0f, 52.0f);
+	Brush.DrawAs = ESlateBrushDrawType::RoundedBox;
+	Brush.TintColor = FSlateColor(FLinearColor::White);
+	Brush.OutlineSettings.CornerRadii = FVector4(10.0f);
+	Brush.OutlineSettings.Color = FSlateColor(FLinearColor(0.18f, 0.78f, 1.0f, 0.72f));
+	Brush.OutlineSettings.Width = 1.0f;
+	Image.SetBrush(Brush);
+}
+
 UImage* AddButtonIcon(
 	UWidgetTree& WidgetTree,
 	UButton& Button,
@@ -150,6 +163,24 @@ bool IsRoleTooltipPreviewRequested()
 	return false;
 #else
 	return FParse::Param(FCommandLine::Get(), TEXT("PHPreviewRoleTooltip"));
+#endif
+}
+
+bool IsCancelButtonPreviewRequested()
+{
+#if UE_BUILD_SHIPPING
+	return false;
+#else
+	return FParse::Param(FCommandLine::Get(), TEXT("PHPreviewCancelButton"));
+#endif
+}
+
+bool IsClientUpdateNoticePreviewRequested()
+{
+#if UE_BUILD_SHIPPING
+	return false;
+#else
+	return FParse::Param(FCommandLine::Get(), TEXT("PHPreviewClientUpdateRequired"));
 #endif
 }
 }
@@ -292,6 +323,47 @@ void UPHMatchmakingWidget::NativeOnInitialized()
 		NameSlot->SetVerticalAlignment(VAlign_Center);
 	}
 
+	ClientUpdateNoticeCard = WidgetTree->ConstructWidget<UBorder>(
+		UBorder::StaticClass(), TEXT("ClientUpdateRequiredCard"));
+	ApplyRoundedBorderStyle(
+		*ClientUpdateNoticeCard,
+		FLinearColor(0.12f, 0.018f, 0.012f, 0.985f),
+		FLinearColor(1.0f, 0.30f, 0.16f, 0.94f),
+		14.0f);
+	ClientUpdateNoticeCard->SetPadding(FMargin(20.0f, 14.0f));
+	ClientUpdateNoticeCard->SetVisibility(ESlateVisibility::Collapsed);
+	if (UCanvasPanelSlot* UpdateNoticeSlot = RootCanvas->AddChildToCanvas(ClientUpdateNoticeCard))
+	{
+		UpdateNoticeSlot->SetAnchors(FAnchors(0.5f, 0.0f));
+		UpdateNoticeSlot->SetAlignment(FVector2D(0.5f, 0.0f));
+		UpdateNoticeSlot->SetPosition(FVector2D(0.0f, 180.0f));
+		UpdateNoticeSlot->SetSize(FVector2D(540.0f, 112.0f));
+		UpdateNoticeSlot->SetZOrder(40);
+	}
+	UVerticalBox* UpdateNoticeContent = WidgetTree->ConstructWidget<UVerticalBox>(
+		UVerticalBox::StaticClass(), TEXT("ClientUpdateRequiredContent"));
+	ClientUpdateNoticeCard->SetContent(UpdateNoticeContent);
+	ClientUpdateNoticeTitle = WidgetTree->ConstructWidget<UTextBlock>(
+		UTextBlock::StaticClass(), TEXT("ClientUpdateRequiredTitle"));
+	ClientUpdateNoticeTitle->SetText(FText::FromString(TEXT("CLIENT OBSOLÈTE")));
+	ClientUpdateNoticeTitle->SetJustification(ETextJustify::Center);
+	ClientUpdateNoticeTitle->SetColorAndOpacity(FSlateColor(FLinearColor(1.0f, 0.40f, 0.22f, 1.0f)));
+	ClientUpdateNoticeTitle->SetFont(FSlateFontInfo(ClientUpdateNoticeTitle->GetFont().FontObject, 22));
+	UpdateNoticeContent->AddChildToVerticalBox(ClientUpdateNoticeTitle);
+	ClientUpdateNoticeDescription = WidgetTree->ConstructWidget<UTextBlock>(
+		UTextBlock::StaticClass(), TEXT("ClientUpdateRequiredDescription"));
+	ClientUpdateNoticeDescription->SetText(FText::FromString(
+		TEXT("Relance Steam et mets à jour Prop Caper pour rejoindre la file d'attente.")));
+	ClientUpdateNoticeDescription->SetJustification(ETextJustify::Center);
+	ClientUpdateNoticeDescription->SetAutoWrapText(true);
+	ClientUpdateNoticeDescription->SetColorAndOpacity(FSlateColor(FLinearColor(0.96f, 0.88f, 0.82f, 1.0f)));
+	ClientUpdateNoticeDescription->SetFont(FSlateFontInfo(ClientUpdateNoticeDescription->GetFont().FontObject, 16));
+	if (UVerticalBoxSlot* DescriptionSlot = UpdateNoticeContent->AddChildToVerticalBox(ClientUpdateNoticeDescription))
+	{
+		DescriptionSlot->SetPadding(FMargin(0.0f, 6.0f, 0.0f, 0.0f));
+		DescriptionSlot->SetHorizontalAlignment(HAlign_Fill);
+	}
+
 	RoleTooltipCard = WidgetTree->ConstructWidget<UBorder>(
 		UBorder::StaticClass(), TEXT("RoleTooltipCard"));
 	ApplyRoundedBorderStyle(
@@ -313,15 +385,15 @@ void UPHMatchmakingWidget::NativeOnInitialized()
 	UHorizontalBox* TooltipRow = WidgetTree->ConstructWidget<UHorizontalBox>(
 		UHorizontalBox::StaticClass(), TEXT("RoleTooltipRow"));
 	RoleTooltipCard->SetContent(TooltipRow);
-	USizeBox* TooltipIconSize = WidgetTree->ConstructWidget<USizeBox>(
+	RoleTooltipIconContainer = WidgetTree->ConstructWidget<USizeBox>(
 		USizeBox::StaticClass(), TEXT("RoleTooltipIconSize"));
-	TooltipIconSize->SetWidthOverride(70.0f);
-	TooltipIconSize->SetHeightOverride(70.0f);
+	RoleTooltipIconContainer->SetWidthOverride(70.0f);
+	RoleTooltipIconContainer->SetHeightOverride(70.0f);
 	RoleTooltipIcon = WidgetTree->ConstructWidget<UImage>(
 		UImage::StaticClass(), TEXT("RoleTooltipIcon"));
 	RoleTooltipIcon->SetDesiredSizeOverride(FVector2D(64.0f, 64.0f));
-	TooltipIconSize->SetContent(RoleTooltipIcon);
-	if (UHorizontalBoxSlot* TooltipIconSlot = TooltipRow->AddChildToHorizontalBox(TooltipIconSize))
+	RoleTooltipIconContainer->SetContent(RoleTooltipIcon);
+	if (UHorizontalBoxSlot* TooltipIconSlot = TooltipRow->AddChildToHorizontalBox(RoleTooltipIconContainer))
 	{
 		TooltipIconSlot->SetPadding(FMargin(0.0f, 0.0f, 14.0f, 0.0f));
 		TooltipIconSlot->SetVerticalAlignment(VAlign_Center);
@@ -481,14 +553,22 @@ void UPHMatchmakingWidget::NativeOnInitialized()
 
 	CancelButton = WidgetTree->ConstructWidget<UButton>(
 		UButton::StaticClass(), TEXT("CancelMatchmakingButton"));
-	ApplyRoundedButtonStyle(*CancelButton, FLinearColor(0.32f, 0.25f, 0.08f, 0.98f));
-	CancelButton->SetToolTipText(FText::FromString(TEXT("Annuler la recherche en cours.")));
-	AddButtonLabel(*WidgetTree, *CancelButton, TEXT("CancelMatchmakingLabel"), TEXT("ANNULER LA RECHERCHE"));
+	ApplyRoundedButtonStyle(*CancelButton, FLinearColor(0.34f, 0.035f, 0.025f, 0.98f));
+	UTextBlock* CancelLabel = AddButtonLabel(
+		*WidgetTree, *CancelButton, TEXT("CancelMatchmakingLabel"), TEXT("X"));
+	CancelLabel->SetFont(FSlateFontInfo(CancelLabel->GetFont().FontObject, 28));
+	CancelLabel->SetColorAndOpacity(FSlateColor(FLinearColor(1.0f, 0.34f, 0.24f, 1.0f)));
+	if (UButtonSlot* CancelContentSlot = Cast<UButtonSlot>(CancelLabel->Slot))
+	{
+		CancelContentSlot->SetPadding(FMargin(17.0f, 10.0f));
+		CancelContentSlot->SetHorizontalAlignment(HAlign_Center);
+		CancelContentSlot->SetVerticalAlignment(VAlign_Center);
+	}
 	CancelButton->SetVisibility(ESlateVisibility::Collapsed);
 	if (UVerticalBoxSlot* CancelButtonSlot = Menu->AddChildToVerticalBox(CancelButton))
 	{
-		CancelButtonSlot->SetPadding(FMargin(0.0f, 18.0f, 0.0f, 8.0f));
-		CancelButtonSlot->SetHorizontalAlignment(HAlign_Fill);
+		CancelButtonSlot->SetPadding(FMargin(0.0f, 12.0f, 0.0f, 8.0f));
+		CancelButtonSlot->SetHorizontalAlignment(HAlign_Center);
 	}
 
 	StatusLabel = WidgetTree->ConstructWidget<UTextBlock>(
@@ -622,11 +702,13 @@ void UPHMatchmakingWidget::NativeOnInitialized()
 	FindButton->OnHovered.AddDynamic(this, &UPHMatchmakingWidget::HandleSurvivorTooltipHovered);
 	HostButton->OnHovered.AddDynamic(this, &UPHMatchmakingWidget::HandleKillerTooltipHovered);
 	RandomButton->OnHovered.AddDynamic(this, &UPHMatchmakingWidget::HandleRandomTooltipHovered);
+	CancelButton->OnHovered.AddDynamic(this, &UPHMatchmakingWidget::HandleCancelTooltipHovered);
 	CustomizationButton->OnHovered.AddDynamic(this, &UPHMatchmakingWidget::HandleCustomizationTooltipHovered);
 	QuitButton->OnHovered.AddDynamic(this, &UPHMatchmakingWidget::HandleQuitTooltipHovered);
 	FindButton->OnUnhovered.AddDynamic(this, &UPHMatchmakingWidget::HandleRoleTooltipUnhovered);
 	HostButton->OnUnhovered.AddDynamic(this, &UPHMatchmakingWidget::HandleRoleTooltipUnhovered);
 	RandomButton->OnUnhovered.AddDynamic(this, &UPHMatchmakingWidget::HandleRoleTooltipUnhovered);
+	CancelButton->OnUnhovered.AddDynamic(this, &UPHMatchmakingWidget::HandleRoleTooltipUnhovered);
 	CustomizationButton->OnUnhovered.AddDynamic(this, &UPHMatchmakingWidget::HandleRoleTooltipUnhovered);
 	QuitButton->OnUnhovered.AddDynamic(this, &UPHMatchmakingWidget::HandleRoleTooltipUnhovered);
 	CancelButton->OnClicked.AddDynamic(this, &UPHMatchmakingWidget::HandleCancelClicked);
@@ -651,6 +733,7 @@ void UPHMatchmakingWidget::NativeConstruct()
 		Social->OnInviteChanged.AddDynamic(this, &UPHMatchmakingWidget::HandleInviteChanged);
 	}
 	RefreshLocalSteamIdentity();
+	RefreshClientUpdateNotice();
 	RefreshMatchmakingControls();
 	RefreshLobbyPresentation();
 	if (IsFullLobbyPreviewRequested())
@@ -664,6 +747,10 @@ void UPHMatchmakingWidget::NativeConstruct()
 	if (IsRoleTooltipPreviewRequested())
 	{
 		HandleSurvivorTooltipHovered();
+	}
+	if (IsCancelButtonPreviewRequested())
+	{
+		SetButtonsEnabled(false, true);
 	}
 
 	if (APlayerController* PlayerController = GetOwningPlayer())
@@ -762,6 +849,12 @@ void UPHMatchmakingWidget::ShowRoleTooltip(
 		FLinearColor(0.007f, 0.013f, 0.024f, 0.985f),
 		AccentColor.CopyWithNewOpacity(0.9f),
 		12.0f);
+	if (RoleTooltipIconContainer != nullptr)
+	{
+		RoleTooltipIconContainer->SetVisibility(Icon != nullptr
+			? ESlateVisibility::HitTestInvisible
+			: ESlateVisibility::Collapsed);
+	}
 	RoleTooltipIcon->SetBrushFromTexture(Icon, false);
 	RoleTooltipTitle->SetText(FText::FromString(Title));
 	RoleTooltipTitle->SetColorAndOpacity(FSlateColor(AccentColor));
@@ -799,6 +892,16 @@ void UPHMatchmakingWidget::HandleRandomTooltipHovered()
 		TEXT("ALÉATOIRE"),
 		TEXT("Laisse le matchmaking choisir ton camp et trouve plus vite un salon disponible."),
 		FLinearColor(0.76f, 0.36f, 1.0f, 1.0f));
+}
+
+void UPHMatchmakingWidget::HandleCancelTooltipHovered()
+{
+	ShowRoleTooltip(
+		CancelButton,
+		nullptr,
+		TEXT("QUITTER LA FILE"),
+		TEXT("Quitter la file d'attente et annuler la recherche en cours."),
+		FLinearColor(1.0f, 0.28f, 0.18f, 1.0f));
 }
 
 void UPHMatchmakingWidget::HandleCustomizationTooltipHovered()
@@ -1161,6 +1264,7 @@ void UPHMatchmakingWidget::HandleGatewayStateChanged(
 	const FString& StatusMessage)
 {
 	SetStatus(StatusMessage);
+	RefreshClientUpdateNotice();
 	RefreshMatchmakingControls();
 	RefreshLobbyPresentation();
 }
@@ -1168,6 +1272,7 @@ void UPHMatchmakingWidget::HandleGatewayStateChanged(
 void UPHMatchmakingWidget::HandleOperationFinished(const bool bSucceeded, const FString& Message)
 {
 	SetStatus(Message);
+	RefreshClientUpdateNotice();
 	RefreshMatchmakingControls();
 	RefreshLobbyPresentation();
 }
@@ -1194,13 +1299,15 @@ void UPHMatchmakingWidget::RefreshMatchmakingControls()
 void UPHMatchmakingWidget::RefreshLocalSteamIdentity()
 {
 	UPHSocialInviteSubsystem* Social = GetSocialInviteSubsystem();
+	const UPHSessionSubsystem* Sessions = GetSessionSubsystem();
 	const FPHSocialFriendEntry Profile = Social != nullptr
 		? Social->GetLocalSteamProfile()
 		: FPHSocialFriendEntry();
-	const bool bHasIdentity = !Profile.DisplayName.IsEmpty();
+	const bool bSteamAvailable = Sessions != nullptr && Sessions->IsSteamAvailable();
+	const bool bHasIdentity = bSteamAvailable && !Profile.DisplayName.IsEmpty();
 	if (SteamIdentityCard != nullptr)
 	{
-		SteamIdentityCard->SetVisibility(bHasIdentity ? ESlateVisibility::Visible : ESlateVisibility::Collapsed);
+		SteamIdentityCard->SetVisibility(ESlateVisibility::HitTestInvisible);
 	}
 	if (LocalSteamName != nullptr)
 	{
@@ -1208,15 +1315,37 @@ void UPHMatchmakingWidget::RefreshLocalSteamIdentity()
 		const FString CompactSteamName = Profile.DisplayName.Len() > MaxSteamNameCharacters
 			? Profile.DisplayName.Left(MaxSteamNameCharacters - 3) + TEXT("...")
 			: Profile.DisplayName;
-		LocalSteamName->SetText(FText::FromString(CompactSteamName));
+		LocalSteamName->SetText(FText::FromString(bHasIdentity
+			? CompactSteamName
+			: (bSteamAvailable ? TEXT("CONNEXION STEAM...") : TEXT("STEAM OBLIGATOIRE"))));
+		LocalSteamName->SetJustification(bHasIdentity ? ETextJustify::Left : ETextJustify::Center);
+		LocalSteamName->SetColorAndOpacity(FSlateColor(bHasIdentity
+			? FLinearColor::White
+			: (bSteamAvailable
+				? FLinearColor(0.60f, 0.82f, 0.92f, 1.0f)
+				: FLinearColor(1.0f, 0.58f, 0.16f, 1.0f))));
 	}
 	if (LocalSteamAvatar != nullptr)
 	{
-		LocalSteamAvatar->SetBrushFromTexture(Profile.AvatarTexture, true);
-		LocalSteamAvatar->SetVisibility(Profile.AvatarTexture != nullptr
+		ApplyRoundedAvatarBrush(*LocalSteamAvatar, Profile.AvatarTexture);
+		LocalSteamAvatar->SetVisibility(bHasIdentity && Profile.AvatarTexture != nullptr
 			? ESlateVisibility::HitTestInvisible
 			: ESlateVisibility::Collapsed);
 	}
+}
+
+void UPHMatchmakingWidget::RefreshClientUpdateNotice()
+{
+	if (ClientUpdateNoticeCard == nullptr)
+	{
+		return;
+	}
+	const UPHMatchmakingGatewaySubsystem* Gateway = GetGatewaySubsystem();
+	const bool bUpdateRequired = IsClientUpdateNoticePreviewRequested()
+		|| (Gateway != nullptr && Gateway->IsClientUpdateRequired());
+	ClientUpdateNoticeCard->SetVisibility(bUpdateRequired
+		? ESlateVisibility::HitTestInvisible
+		: ESlateVisibility::Collapsed);
 }
 
 void UPHMatchmakingWidget::RefreshLobbyPresentation()

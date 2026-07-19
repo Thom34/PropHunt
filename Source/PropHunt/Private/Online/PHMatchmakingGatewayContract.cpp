@@ -224,6 +224,33 @@ bool PHMatchmakingGatewayContract::IsSafeLobbyInviteSecret(const FString& Invite
 	return true;
 }
 
+bool PHMatchmakingGatewayContract::ParsePublicErrorResponse(
+	const FString& Json,
+	FString& OutCode,
+	FString& OutMessage)
+{
+	OutCode.Reset();
+	OutMessage.Reset();
+	if (Json.IsEmpty() || Json.Len() > MaxResponseBytes)
+	{
+		return false;
+	}
+	TSharedPtr<FJsonObject> Root;
+	const TSharedRef<TJsonReader<>> Reader = TJsonReaderFactory<>::Create(Json);
+	if (!FJsonSerializer::Deserialize(Reader, Root) || !Root.IsValid())
+	{
+		return false;
+	}
+	const TSharedPtr<FJsonObject>* ErrorObject = nullptr;
+	return Root->TryGetObjectField(TEXT("error"), ErrorObject)
+		&& ErrorObject != nullptr
+		&& ErrorObject->IsValid()
+		&& (*ErrorObject)->TryGetStringField(TEXT("code"), OutCode)
+		&& (*ErrorObject)->TryGetStringField(TEXT("message"), OutMessage)
+		&& IsSafeIdentifier(OutCode, 64)
+		&& IsSafePublicMessage(OutMessage);
+}
+
 bool PHMatchmakingGatewayContract::ParseLobbyInviteResponse(
 	const FString& Json,
 	const int32 ExpectedProtocolVersion,

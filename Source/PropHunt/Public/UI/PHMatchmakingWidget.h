@@ -12,6 +12,7 @@ class UBorder;
 class UCanvasPanel;
 class UImage;
 class UScrollBox;
+class USizeBox;
 class UTextBlock;
 class UTexture2D;
 class AActor;
@@ -50,6 +51,9 @@ private:
 
 	UFUNCTION()
 	void HandleRandomTooltipHovered();
+
+	UFUNCTION()
+	void HandleCancelTooltipHovered();
 
 	UFUNCTION()
 	void HandleQuitTooltipHovered();
@@ -95,6 +99,7 @@ private:
 	void ClearLobbyCharacterPreview();
 	void RebuildFriendsList();
 	void RefreshLocalSteamIdentity();
+	void RefreshClientUpdateNotice();
 	void ShowRoleTooltip(UButton* AnchorButton, UTexture2D* Icon, const FString& Title, const FString& Description, const FLinearColor& AccentColor);
 	void SetButtonsEnabled(bool bRoleButtonsEnabled, bool bCancelEnabled);
 	void SetStatus(const FString& Status);
@@ -165,6 +170,15 @@ private:
 	TObjectPtr<UTextBlock> LocalSteamName;
 
 	UPROPERTY(Transient)
+	TObjectPtr<UBorder> ClientUpdateNoticeCard;
+
+	UPROPERTY(Transient)
+	TObjectPtr<UTextBlock> ClientUpdateNoticeTitle;
+
+	UPROPERTY(Transient)
+	TObjectPtr<UTextBlock> ClientUpdateNoticeDescription;
+
+	UPROPERTY(Transient)
 	TObjectPtr<UImage> GameLogoImage;
 
 	UPROPERTY(Transient)
@@ -172,6 +186,9 @@ private:
 
 	UPROPERTY(Transient)
 	TObjectPtr<UImage> RoleTooltipIcon;
+
+	UPROPERTY(Transient)
+	TObjectPtr<USizeBox> RoleTooltipIconContainer;
 
 	UPROPERTY(Transient)
 	TObjectPtr<UTextBlock> RoleTooltipTitle;

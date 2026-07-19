@@ -296,6 +296,21 @@ bool FPHNOVAGatewayContractTest::RunTest(const FString& Parameters)
 		PHMatchmakingGatewayContract::NormalizeConnectAddress(
 			TEXT("127.0.0.1:7836?listen"), Normalized, Error));
 
+	FString PublicErrorCode;
+	FString PublicErrorMessage;
+	TestTrue(TEXT("The client accepts the bounded update-required error envelope"),
+		PHMatchmakingGatewayContract::ParsePublicErrorResponse(
+			TEXT("{\"error\":{\"code\":\"client_update_required\",\"message\":\"Une mise à jour du jeu est requise.\"}}"),
+			PublicErrorCode,
+			PublicErrorMessage));
+	TestEqual(TEXT("The update-required code remains machine-readable"),
+		PublicErrorCode, FString(TEXT("client_update_required")));
+	TestFalse(TEXT("Multiline gateway errors are rejected"),
+		PHMatchmakingGatewayContract::ParsePublicErrorResponse(
+			TEXT("{\"error\":{\"code\":\"client_update_required\",\"message\":\"unsafe\\nmessage\"}}"),
+			PublicErrorCode,
+			PublicErrorMessage));
+
 	FPHGatewayTicket Ticket;
 	const FString PendingJson =
 		TEXT("{\"schema\":1,\"protocol_version\":91,\"build_id\":\"0.1.1907001\",\"ticket_id\":\"ticket-12345678\",\"state\":\"queued\",\"retry_after_ms\":500}");

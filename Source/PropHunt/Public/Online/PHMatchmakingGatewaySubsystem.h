@@ -102,6 +102,9 @@ public:
 	UFUNCTION(BlueprintPure, Category = "PropHunt|Matchmaking")
 	bool IsLobbyLocked() const { return bLobbyLocked; }
 
+	UFUNCTION(BlueprintPure, Category = "PropHunt|Matchmaking")
+	bool IsClientUpdateRequired() const { return bClientUpdateRequired; }
+
 	FString GetLobbyId() const { return LobbyId; }
 
 	UPROPERTY(BlueprintAssignable, Category = "PropHunt|Matchmaking")
@@ -194,4 +197,5 @@ private:
 	bool bHasLobbySnapshot = false;
 	bool bLobbyLocked = false;
 	bool bSteamAuthTokenRequestInProgress = false;
+	bool bClientUpdateRequired = false;
 };

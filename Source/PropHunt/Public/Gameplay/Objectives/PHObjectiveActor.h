@@ -9,7 +9,6 @@ class APHHunterCharacter;
 class APHPropCharacter;
 class USceneComponent;
 class UStaticMeshComponent;
-class UWidgetComponent;
 
 UENUM(BlueprintType)
 enum class EPHObjectiveInterruptionPolicy : uint8
@@ -82,6 +81,9 @@ public:
 	float GetObjectiveProgress() const { return ObjectiveProgress; }
 
 	UFUNCTION(BlueprintPure, Category = "PropHunt|Objective")
+	FText GetObjectiveDisplayName() const;
+
+	UFUNCTION(BlueprintPure, Category = "PropHunt|Objective")
 	bool IsObjectiveCompleted() const { return bCompleted; }
 
 	UFUNCTION(BlueprintPure, Category = "PropHunt|Objective")
@@ -134,14 +136,8 @@ private:
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "PropHunt|Objective", meta = (AllowPrivateAccess = "true"))
 	TObjectPtr<UStaticMeshComponent> ObjectiveBody;
 
-	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "PropHunt|Objective", meta = (AllowPrivateAccess = "true"))
-	TObjectPtr<UStaticMeshComponent> ProgressBackground;
-
-	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "PropHunt|Objective", meta = (AllowPrivateAccess = "true"))
-	TObjectPtr<UStaticMeshComponent> ProgressFill;
-
-	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "PropHunt|Objective", meta = (AllowPrivateAccess = "true"))
-	TObjectPtr<UWidgetComponent> ProgressWidgetComponent;
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "PropHunt|Objective|Presentation", meta = (AllowPrivateAccess = "true"))
+	FText ObjectiveDisplayName;
 
 	UPROPERTY(EditDefaultsOnly, Category = "PropHunt|Objective", meta = (ClampMin = "1.0", ClampMax = "120.0", Units = "s", AllowPrivateAccess = "true"))
 	float InteractionDurationSeconds;

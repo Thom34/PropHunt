@@ -7,6 +7,7 @@
 #include "Components/CapsuleComponent.h"
 #include "Components/SceneComponent.h"
 #include "Components/StaticMeshComponent.h"
+#include "Components/WidgetComponent.h"
 #include "Animation/AnimSequence.h"
 #include "Engine/Level.h"
 #include "Engine/GameInstance.h"
@@ -845,6 +846,68 @@ bool FPHObjectiveDefaultsTest::RunTest(const FString& Parameters)
 }
 
 IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+	FPHObjectiveLocalFeedbackTest,
+	"PropHunt.Objective.UI.LocalFeedback",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FPHObjectiveLocalFeedbackTest::RunTest(const FString& Parameters)
+{
+	const APHObjectiveActor* ObjectiveDefaults = GetDefault<APHObjectiveActor>();
+	TestNotNull(TEXT("Objective class defaults exist"), ObjectiveDefaults);
+	if (ObjectiveDefaults == nullptr)
+	{
+		return false;
+	}
+
+	TestNull(TEXT("Objectives no longer create a permanent world-space widget"),
+		ObjectiveDefaults->FindComponentByClass<UWidgetComponent>());
+	TArray<UStaticMeshComponent*> ObjectiveMeshes;
+	ObjectiveDefaults->GetComponents(ObjectiveMeshes);
+	TestEqual(TEXT("The objective keeps only its body mesh and no world progress meshes"),
+		ObjectiveMeshes.Num(), 1);
+	TestEqual(TEXT("The neutral authored objective name is used by default"),
+		ObjectiveDefaults->GetObjectiveDisplayName().ToString(), FString(TEXT("OBJECTIF")));
+	const FProperty* DisplayNameProperty = APHObjectiveActor::StaticClass()->FindPropertyByName(TEXT("ObjectiveDisplayName"));
+	TestNotNull(TEXT("ObjectiveDisplayName is exposed for authored presentation"), DisplayNameProperty);
+	if (DisplayNameProperty != nullptr)
+	{
+		TestTrue(TEXT("ObjectiveDisplayName can be edited on definitions and instances"),
+			DisplayNameProperty->HasAnyPropertyFlags(CPF_Edit));
+		TestTrue(TEXT("ObjectiveDisplayName is readable from Blueprint presentation"),
+			DisplayNameProperty->HasAnyPropertyFlags(CPF_BlueprintVisible));
+	}
+
+	TestTrue(TEXT("The owning client sees progress during a confirmed active interaction"),
+		PHObjectiveUI::ShouldShowLocalProgress(true, true, true, false));
+	TestFalse(TEXT("A distant client never sees another player's objective progress"),
+		PHObjectiveUI::ShouldShowLocalProgress(false, true, true, false));
+	TestFalse(TEXT("Stopping or cancelling the interaction hides local progress"),
+		PHObjectiveUI::ShouldShowLocalProgress(true, false, true, false));
+	TestFalse(TEXT("An inactive objective cannot keep local progress visible"),
+		PHObjectiveUI::ShouldShowLocalProgress(true, true, false, false));
+	TestFalse(TEXT("Completing the objective hides local progress"),
+		PHObjectiveUI::ShouldShowLocalProgress(true, true, true, true));
+
+	const APHPropCharacter* PropDefaults = GetDefault<APHPropCharacter>();
+	TestNotNull(TEXT("Prop class defaults exist"), PropDefaults);
+	if (PropDefaults == nullptr)
+	{
+		return false;
+	}
+
+	const FProperty* ActiveObjectiveProperty = APHPropCharacter::StaticClass()->FindPropertyByName(TEXT("ActiveObjective"));
+	TestNotNull(TEXT("ActiveObjective remains a replicated gameplay property"), ActiveObjectiveProperty);
+	if (ActiveObjectiveProperty == nullptr)
+	{
+		return false;
+	}
+
+	TestTrue(TEXT("ActiveObjective remains marked for network replication"),
+		ActiveObjectiveProperty->HasAnyPropertyFlags(CPF_Net));
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
 	FPHObjectiveAuthoredMapTest,
 	"PropHunt.Objective.Graybox.AuthoredMap",
 	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
@@ -863,7 +926,15 @@ bool FPHObjectiveAuthoredMapTest::RunTest(const FString& Parameters)
 	int32 PlayerStartCount = 0;
 	for (const AActor* Actor : ObjectiveWorld->PersistentLevel->Actors)
 	{
-		ObjectiveCount += IsValid(Actor) && Actor->IsA<APHObjectiveActor>() ? 1 : 0;
+		if (const APHObjectiveActor* Objective = Cast<APHObjectiveActor>(Actor))
+		{
+			++ObjectiveCount;
+			TestNull(TEXT("An authored objective has no permanent world-space widget"),
+				Objective->FindComponentByClass<UWidgetComponent>());
+			TArray<UStaticMeshComponent*> ObjectiveMeshes;
+			Objective->GetComponents(ObjectiveMeshes);
+			TestEqual(TEXT("An authored objective keeps only its body mesh"), ObjectiveMeshes.Num(), 1);
+		}
 		PlayerStartCount += IsValid(Actor) && Actor->IsA<APlayerStart>() ? 1 : 0;
 	}
 

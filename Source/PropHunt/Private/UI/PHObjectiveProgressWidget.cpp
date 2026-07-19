@@ -56,8 +56,12 @@ void UPHObjectiveProgressWidget::NativeTick(const FGeometry& MyGeometry, const f
 	}
 	if (PercentageLabel != nullptr)
 	{
-		PercentageLabel->SetText(FText::FromString(FString::Printf(
-			TEXT("GENERATEUR %d%%"),
-			FMath::RoundToInt(Progress * 100.0f))));
+		const FText DisplayName = Objective != nullptr
+			? Objective->GetObjectiveDisplayName()
+			: NSLOCTEXT("PropHuntObjective", "DefaultDisplayName", "OBJECTIF");
+		PercentageLabel->SetText(FText::Format(
+			NSLOCTEXT("PropHuntObjective", "ProgressLabel", "{0} {1}%"),
+			DisplayName,
+			FText::AsNumber(FMath::RoundToInt(Progress * 100.0f))));
 	}
 }

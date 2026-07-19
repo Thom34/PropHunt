@@ -5,6 +5,7 @@
 #include "Camera/CameraTypes.h"
 #include "Components/InputComponent.h"
 #include "Components/CapsuleComponent.h"
+#include "Components/StaticMeshComponent.h"
 #include "Components/WidgetComponent.h"
 #include "Engine/GameInstance.h"
 #include "EngineUtils.h"
@@ -29,7 +30,6 @@
 #include "UI/PHInGameMenuWidget.h"
 #include "UI/PHMatchResultsWidget.h"
 #include "UI/PHMatchmakingWidget.h"
-#include "UI/PHObjectiveProgressWidget.h"
 
 DEFINE_LOG_CATEGORY_STATIC(LogPHObjectiveSmoke, Log, All);
 DEFINE_LOG_CATEGORY_STATIC(LogPHCaptureSmoke, Log, All);
@@ -894,20 +894,23 @@ void APHPlayerController::ReportObjectiveRegressionSmoke()
 	const float ExpectedProgress = Objective != nullptr
 		? FMath::Max(0.0f, ObjectiveRegressionProgressBeforeHit - Objective->GetHunterMeleeRegressionFraction())
 		: -1.0f;
-	const UWidgetComponent* WidgetComponent = Objective != nullptr
-		? Objective->FindComponentByClass<UWidgetComponent>()
-		: nullptr;
-	const bool bWidgetReady = WidgetComponent != nullptr
-		&& Cast<UPHObjectiveProgressWidget>(WidgetComponent->GetUserWidgetObject()) != nullptr;
+	TArray<UStaticMeshComponent*> ObjectiveMeshes;
+	if (Objective != nullptr)
+	{
+		Objective->GetComponents(ObjectiveMeshes);
+	}
+	const bool bNoWorldProgressPresentation = Objective != nullptr
+		&& Objective->FindComponentByClass<UWidgetComponent>() == nullptr
+		&& ObjectiveMeshes.Num() == 1;
 	const bool bSucceeded = ObjectiveRegressionProgressBeforeHit >= 0.20f
 		&& FMath::IsNearlyEqual(ProgressAfterHit, ExpectedProgress, 0.02f)
-		&& bWidgetReady;
+		&& bNoWorldProgressPresentation;
 	UE_LOG(LogPHObjectiveSmoke, Log,
-		TEXT("Objective regression smoke result: progress=%.1f%%->%.1f%% expected=%.1f%% widget=%s result=%s."),
+		TEXT("Objective regression smoke result: progress=%.1f%%->%.1f%% expected=%.1f%% world_progress=%s result=%s."),
 		ObjectiveRegressionProgressBeforeHit * 100.0f,
 		ProgressAfterHit * 100.0f,
 		ExpectedProgress * 100.0f,
-		bWidgetReady ? TEXT("ready") : TEXT("missing"),
+		bNoWorldProgressPresentation ? TEXT("absent") : TEXT("present"),
 		bSucceeded ? TEXT("success") : TEXT("failure"));
 	if (!bSucceeded)
 	{

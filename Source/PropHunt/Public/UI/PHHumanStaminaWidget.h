@@ -10,6 +10,21 @@ class UBorder;
 class UTextBlock;
 class APHGameState;
 
+namespace PHObjectiveUI
+{
+	inline bool ShouldShowLocalProgress(
+		const bool bLocallyControlled,
+		const bool bHasConfirmedInteraction,
+		const bool bObjectiveActive,
+		const bool bObjectiveCompleted)
+	{
+		return bLocallyControlled
+			&& bHasConfirmedInteraction
+			&& bObjectiveActive
+			&& !bObjectiveCompleted;
+	}
+}
+
 UCLASS()
 class PROPHUNT_API UPHHumanStaminaWidget : public UUserWidget
 {

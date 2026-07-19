@@ -45,15 +45,29 @@ La cible publique est un serveur dédié orchestré : le client Steam crée un t
 dans un salon `1 Tueur + 1..4 Survivants`, puis NOVA alloue un worker Linux après verrouillage du roster. Aucun
 joueur n'héberge la partie et le serveur valide rôles, admission, gameplay, résultats et sorties.
 
-La publication technique active est `P9.1 / 0.1.1907001`, protocole `91`, sur la branche Steam privée `beta`.
-Le checkout contient un candidat local plus récent qui ne doit pas être republié sous cet identifiant : lobby
-visuel à quatre emplacements, pseudonymes Steam, invitation par `+`, tiroir Amis, sorties de file idempotentes,
-Results redondants et correctifs soin/objectifs/portes. Le prochain candidat doit être `0.1.1907002` ou supérieur
-et être déployé de manière coordonnée client + gateway + serveur.
+La publication technique active est `P9.1 / 0.1.1907002`, protocole `91`, Steam beta BuildID `24285008`.
+Toute publication suivante doit utiliser `0.1.1907003` ou supérieur et être déployée de manière coordonnée
+client + gateway + serveur.
 
 Le détail vérifié, les limites et les gates de publication sont dans `SourceArt/Docs/PROJECT_STATUS.md`,
 `SourceArt/Docs/24_RELEASE_QUALITY_GATE.md` et `SourceArt/Docs/25_LOBBY_UI_STEAM_INVITES.md` lorsque le checkout
 privé `SourceArt` est présent.
+
+## Verticale jouable Prop Caper
+
+Le checkout de développement contient `/Game/PropHunt/Maps/L_PH_CampCaper_Graybox`, une map authored de
+`110 x 85 m` dans un camp de vacances lacustre nocturne sur sol sec. Lodge, Hub, Maintenance et aperçu Nautique
+sont reliés par trois grandes boucles, deux traverses et un raccourci risqué. La map place dix objectifs, cinq
+rétentions, deux sorties, vingt clusters, huit starts Survivants et quatre starts Hunter.
+
+La passe visuelle comprend 24 meshes originaux, 12 textures 1K, des assemblages Blueprint HISM sans logique de
+jeu et six props pilotes avec LOD/collisions simples/sockets authored. Le gameplay et les validations réseau
+restent en C++ côté serveur ; Blueprint porte l'assemblage et la présentation. Le widget monde historique
+`GENERATEUR n %` a été retiré : seul le joueur local engagé voit la progression HUD d'un objectif nommé.
+
+Le jalon local a passé Map Check, un PIE à un listen server et deux clients, l'audit des starts et un profil
+Development. Il reste à effectuer la revue humaine, la validation serveur dédié avec clients uniquement et le
+package Shipping avant de remplacer la map actuellement publiée.
 
 ## Historique de la fondation graybox
 

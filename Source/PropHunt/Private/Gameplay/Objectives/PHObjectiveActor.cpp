@@ -5,19 +5,18 @@
 #include "Components/CapsuleComponent.h"
 #include "Components/SceneComponent.h"
 #include "Components/StaticMeshComponent.h"
-#include "Components/WidgetComponent.h"
 #include "Engine/World.h"
 #include "Game/PHGameMode.h"
 #include "Game/PHGameState.h"
 #include "Game/PHPlayerState.h"
 #include "Net/UnrealNetwork.h"
-#include "UI/PHObjectiveProgressWidget.h"
 #include "UObject/ConstructorHelpers.h"
 
 DEFINE_LOG_CATEGORY_STATIC(LogPHObjective, Log, All);
 
 APHObjectiveActor::APHObjectiveActor()
-	: InteractionDurationSeconds(24.0f)
+	: ObjectiveDisplayName(NSLOCTEXT("PropHuntObjective", "DefaultDisplayName", "OBJECTIF"))
+	, InteractionDurationSeconds(24.0f)
 	, InteractionDistance(225.0f)
 	, MaximumConcurrentInteractors(4)
 	, AdditionalInteractorContribution(0.5f)
@@ -51,50 +50,23 @@ APHObjectiveActor::APHObjectiveActor()
 	ObjectiveBody->SetCanEverAffectNavigation(false);
 	ObjectiveBody->CanCharacterStepUpOn = ECB_No;
 
-	ProgressBackground = CreateDefaultSubobject<UStaticMeshComponent>(TEXT("ProgressBackground"));
-	ProgressBackground->SetupAttachment(SceneRoot);
-	ProgressBackground->SetRelativeLocation(FVector(0.0f, 0.0f, 132.0f));
-	ProgressBackground->SetRelativeScale3D(FVector(0.12f, 0.12f, 1.0f));
-	ProgressBackground->SetCollisionEnabled(ECollisionEnabled::NoCollision);
-	ProgressBackground->SetCanEverAffectNavigation(false);
-
-	ProgressFill = CreateDefaultSubobject<UStaticMeshComponent>(TEXT("ProgressFill"));
-	ProgressFill->SetupAttachment(SceneRoot);
-	ProgressFill->SetRelativeLocation(FVector(0.0f, -14.0f, 82.0f));
-	ProgressFill->SetRelativeScale3D(FVector(0.08f, 0.08f, 0.01f));
-	ProgressFill->SetCollisionEnabled(ECollisionEnabled::NoCollision);
-	ProgressFill->SetCanEverAffectNavigation(false);
-
-	ProgressWidgetComponent = CreateDefaultSubobject<UWidgetComponent>(TEXT("ProgressWidget"));
-	ProgressWidgetComponent->SetupAttachment(SceneRoot);
-	ProgressWidgetComponent->SetRelativeLocation(FVector(0.0f, 0.0f, 175.0f));
-	ProgressWidgetComponent->SetWidgetSpace(EWidgetSpace::Screen);
-	ProgressWidgetComponent->SetDrawSize(FVector2D(190.0f, 52.0f));
-	ProgressWidgetComponent->SetCollisionEnabled(ECollisionEnabled::NoCollision);
-	ProgressWidgetComponent->SetGenerateOverlapEvents(false);
-	ProgressWidgetComponent->SetWidgetClass(UPHObjectiveProgressWidget::StaticClass());
-
 	static ConstructorHelpers::FObjectFinder<UStaticMesh> CubeMesh(TEXT("/Engine/BasicShapes/Cube.Cube"));
 	if (CubeMesh.Succeeded())
 	{
 		ObjectiveBody->SetStaticMesh(CubeMesh.Object);
-		ProgressBackground->SetStaticMesh(CubeMesh.Object);
-		ProgressFill->SetStaticMesh(CubeMesh.Object);
 	}
+}
+
+FText APHObjectiveActor::GetObjectiveDisplayName() const
+{
+	return ObjectiveDisplayName.IsEmpty()
+		? NSLOCTEXT("PropHuntObjective", "DefaultDisplayName", "OBJECTIF")
+		: ObjectiveDisplayName;
 }
 
 void APHObjectiveActor::BeginPlay()
 {
 	Super::BeginPlay();
-	if (ProgressWidgetComponent != nullptr)
-	{
-		ProgressWidgetComponent->InitWidget();
-		if (UPHObjectiveProgressWidget* ProgressWidget = Cast<UPHObjectiveProgressWidget>(
-			ProgressWidgetComponent->GetUserWidgetObject()))
-		{
-			ProgressWidget->SetObjective(this);
-		}
-	}
 	RefreshPresentation();
 }
 
@@ -325,22 +297,6 @@ void APHObjectiveActor::RefreshPresentation()
 	{
 		ObjectiveBody->SetVisibility(bVisible, true);
 		ObjectiveBody->SetCollisionEnabled(bVisible ? ECollisionEnabled::QueryOnly : ECollisionEnabled::NoCollision);
-	}
-	if (ProgressBackground != nullptr)
-	{
-		ProgressBackground->SetVisibility(bVisible && !bCompleted, true);
-	}
-	if (ProgressFill != nullptr)
-	{
-		ProgressFill->SetVisibility(bVisible, true);
-		const float VisualProgress = bCompleted ? 1.0f : FMath::Clamp(ObjectiveProgress, 0.0f, 1.0f);
-		const float HalfHeight = FMath::Max(0.5f, 50.0f * VisualProgress);
-		ProgressFill->SetRelativeScale3D(FVector(0.08f, 0.08f, HalfHeight / 50.0f));
-		ProgressFill->SetRelativeLocation(FVector(0.0f, -14.0f, 82.0f + HalfHeight));
-	}
-	if (ProgressWidgetComponent != nullptr)
-	{
-		ProgressWidgetComponent->SetVisibility(bVisible && !bCompleted);
 	}
 }
 

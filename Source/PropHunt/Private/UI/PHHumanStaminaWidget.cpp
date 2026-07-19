@@ -317,7 +317,11 @@ void UPHHumanStaminaWidget::NativeTick(const FGeometry& MyGeometry, const float 
 	const APHExitGate* ActiveExitGate = PropCharacter != nullptr
 		? PropCharacter->GetActiveExitGate()
 		: nullptr;
-	const bool bShowObjectiveProgress = ActiveObjective != nullptr;
+	const bool bShowObjectiveProgress = PHObjectiveUI::ShouldShowLocalProgress(
+		PropCharacter != nullptr && PropCharacter->IsLocallyControlled(),
+		ActiveObjective != nullptr,
+		ActiveObjective != nullptr && ActiveObjective->IsObjectiveActive(),
+		ActiveObjective != nullptr && ActiveObjective->IsObjectiveCompleted());
 	const bool bShowExitGateProgress = ActiveExitGate != nullptr;
 	const bool bShowGenericProgress = bShowRetentionRescue || bShowObjectiveProgress || bShowExitGateProgress;
 	const float CaptureProgress = PropCharacter == nullptr
@@ -389,7 +393,9 @@ void UPHHumanStaminaWidget::NativeTick(const FGeometry& MyGeometry, const float 
 		}
 		else if (bShowObjectiveProgress)
 		{
-			CaptureProgressLabel->SetText(FText::FromString(TEXT("OBJECTIF - MAINTIENS CLIC")));
+			CaptureProgressLabel->SetText(FText::Format(
+				NSLOCTEXT("PropHuntObjective", "HoldInteractionPrompt", "{0} - MAINTIENS CLIC"),
+				ActiveObjective->GetObjectiveDisplayName()));
 		}
 	}
 

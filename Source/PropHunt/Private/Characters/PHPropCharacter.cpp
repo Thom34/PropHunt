@@ -243,7 +243,7 @@ void APHPropCharacter::GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& Out
 	DOREPLIFETIME(APHPropCharacter, ReplicatedPhysicsBodyLinearVelocity);
 	DOREPLIFETIME(APHPropCharacter, ReplicatedPhysicsBodyAngularVelocity);
 	DOREPLIFETIME(APHPropCharacter, bReplicatedPhysicsBodyGrounded);
-	DOREPLIFETIME(APHPropCharacter, ActiveObjective);
+	DOREPLIFETIME_CONDITION(APHPropCharacter, ActiveObjective, COND_OwnerOnly);
 	DOREPLIFETIME(APHPropCharacter, ActiveExitGate);
 	DOREPLIFETIME(APHPropCharacter, ActiveRetentionRescuePoint);
 	DOREPLIFETIME_CONDITION(APHPropCharacter, CurrentHumanStamina, COND_OwnerOnly);

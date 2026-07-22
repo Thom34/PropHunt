@@ -5,6 +5,7 @@
 #include "Interfaces/IPluginManager.h"
 #include "Interfaces/IProjectManager.h"
 #include "Misc/Guid.h"
+#include "Misc/SecureHash.h"
 #include "Misc/Paths.h"
 #include "ModuleDescriptor.h"
 #include "PluginDescriptor.h"
@@ -52,9 +53,11 @@ FString PluginTypeText(const EPluginType Type)
 FString ProjectRevision()
 {
     const FString ProjectFile = FPaths::ConvertRelativePathToFull(FPaths::GetProjectFilePath());
+    const FString ContentHash = LexToString(FMD5Hash::HashFile(*ProjectFile));
     return FString::Printf(
-        TEXT("%s:%lld:%lld"),
+        TEXT("%s:%s:%lld:%lld"),
         *ProjectFile,
+        *ContentHash,
         IFileManager::Get().FileSize(*ProjectFile),
         IFileManager::Get().GetTimeStamp(*ProjectFile).ToUnixTimestamp());
 }
@@ -66,6 +69,84 @@ bool IsCanonicalProjectFile()
         FPaths::ProjectDir() / TEXT("PropHunt.uproject"));
     return FPaths::IsSamePath(Actual, Expected)
         && FPaths::GetCleanFilename(Actual) == TEXT("PropHunt.uproject");
+}
+
+FPluginDescriptor CurrentPluginDescriptor(const TSharedRef<IPlugin>& Plugin)
+{
+    FPluginDescriptor Descriptor = Plugin->GetDescriptor();
+    FPluginDescriptor DiskDescriptor;
+    FText Failure;
+    if (DiskDescriptor.Load(Plugin->GetDescriptorFileName(), Failure))
+    {
+        Descriptor = MoveTemp(DiskDescriptor);
+    }
+    return Descriptor;
+}
+
+TArray<FString> FindRequiredEnabledDependents(const FString& PluginName)
+{
+    TArray<FString> Dependents;
+    for (const TSharedRef<IPlugin>& Candidate : IPluginManager::Get().GetEnabledPlugins())
+    {
+        if (Candidate->GetName().Equals(PluginName, ESearchCase::IgnoreCase))
+        {
+            continue;
+        }
+        const FPluginDescriptor Descriptor = CurrentPluginDescriptor(Candidate);
+        const bool bRequiresTarget = Descriptor.Plugins.ContainsByPredicate(
+            [&PluginName](const FPluginReferenceDescriptor& Dependency)
+            {
+                return Dependency.bEnabled
+                    && !Dependency.bOptional
+                    && Dependency.Name.Equals(PluginName, ESearchCase::IgnoreCase);
+            });
+        if (bRequiresTarget)
+        {
+            Dependents.Add(Candidate->GetName());
+        }
+    }
+    Dependents.Sort();
+    return Dependents;
+}
+
+bool HasExplicitProjectReference(const FString& PluginName)
+{
+    const FProjectDescriptor* Project = IProjectManager::Get().GetCurrentProject();
+    return Project && Project->FindPluginReferenceIndex(PluginName) != INDEX_NONE;
+}
+
+bool EvaluatePluginMutationPolicy(
+    const TSharedRef<IPlugin>& Plugin,
+    const bool bDesiredEnabled,
+    FString& OutCode,
+    FString& OutMessage)
+{
+    if (!bDesiredEnabled)
+    {
+        const TArray<FString> Dependents = FindRequiredEnabledDependents(Plugin->GetName());
+        if (!Dependents.IsEmpty())
+        {
+            OutCode = TEXT("required_plugin_disable_denied");
+            OutMessage = FString::Printf(
+                TEXT("%s is a required non-optional dependency of enabled plugin(s): %s"),
+                *Plugin->GetName(),
+                *FString::Join(Dependents, TEXT(", ")));
+            return false;
+        }
+        return true;
+    }
+
+    if ((Plugin->GetType() == EPluginType::Engine
+            || Plugin->GetType() == EPluginType::Enterprise)
+        && !HasExplicitProjectReference(Plugin->GetName()))
+    {
+        OutCode = TEXT("engine_plugin_enable_denied");
+        OutMessage = FString::Printf(
+            TEXT("%s is an engine plugin without an existing explicit PropHunt.uproject reference."),
+            *Plugin->GetName());
+        return false;
+    }
+    return true;
 }
 }
 
@@ -167,6 +248,13 @@ FThomasPluginChangePlanResult UThomasProjectToolset::PlanPluginEnabled(
         return MakeError<FThomasPluginChangePlanResult>(
             TEXT("no_change"), bEnabled ? TEXT("Already enabled.") : TEXT("Already disabled."));
     }
+    FString PolicyCode;
+    FString PolicyMessage;
+    if (!EvaluatePluginMutationPolicy(
+            Plugin.ToSharedRef(), bEnabled, PolicyCode, PolicyMessage))
+    {
+        return MakeError<FThomasPluginChangePlanResult>(PolicyCode, PolicyMessage);
+    }
 
     FThomasPluginChangePlanResult Result;
     Result.bOk = true;
@@ -176,6 +264,7 @@ FThomasPluginChangePlanResult UThomasProjectToolset::PlanPluginEnabled(
     Result.bDesiredEnabled = bEnabled;
     Result.Warnings.Add(TEXT("PropHunt.uproject will be rewritten."));
     Result.Warnings.Add(TEXT("The effective plugin set changes only after restarting Unreal Editor."));
+    Result.Warnings.Add(TEXT("Required plugin dependencies are derived from current .uplugin descriptors and checked again at Apply."));
 
     Result.PlanId = FGuid::NewGuid().ToString(EGuidFormats::Digits);
     FPluginPlan Plan;
@@ -219,6 +308,13 @@ FThomasPluginChangeApplyResult UThomasProjectToolset::ApplyPluginPlan(
         return MakeError<FThomasPluginChangeApplyResult>(
             TEXT("plugin_state_conflict"), Plan.PluginName);
     }
+    FString PolicyCode;
+    FString PolicyMessage;
+    if (!EvaluatePluginMutationPolicy(
+            Plugin.ToSharedRef(), Plan.bDesiredEnabled, PolicyCode, PolicyMessage))
+    {
+        return MakeError<FThomasPluginChangeApplyResult>(PolicyCode, PolicyMessage);
+    }
 
     FThomasPluginChangeApplyResult Result;
     Result.PluginName = Plan.PluginName;
@@ -254,3 +350,15 @@ FThomasPluginChangeApplyResult UThomasProjectToolset::ApplyPluginPlan(
     Result.ProjectRevision = ProjectRevision();
     return Result;
 }
+
+#if WITH_DEV_AUTOMATION_TESTS
+bool UThomasProjectToolset::ExpirePluginPlanForTests(const FString& PlanId)
+{
+    if (FPluginPlan* Plan = Plans.Find(PlanId))
+    {
+        Plan->CreatedAtSeconds -= PlanLifetimeSeconds + 1.0;
+        return true;
+    }
+    return false;
+}
+#endif

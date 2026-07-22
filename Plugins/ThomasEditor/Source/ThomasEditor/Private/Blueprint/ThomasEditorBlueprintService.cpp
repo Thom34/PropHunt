@@ -52,6 +52,18 @@ FString ObjectPath(const FString& Input, bool bGeneratedClass)
     return PackagePath + TEXT(".") + Name;
 }
 
+bool IsProductionBlueprintPath(const FString& Input)
+{
+    const FString PackagePath = FPackageName::ObjectPathToPackageName(
+        ObjectPath(Input, false));
+    FText Reason;
+    return FPackageName::IsValidLongPackageName(PackagePath, false, &Reason)
+        && (PackagePath == TEXT("/Game/PropHunt")
+            || PackagePath.StartsWith(TEXT("/Game/PropHunt/")))
+        && !PackagePath.Contains(TEXT(".."))
+        && !PackagePath.StartsWith(TEXT("/Game/Developers/"));
+}
+
 UBlueprint* LoadBlueprint(const FString& Path)
 {
     return LoadObject<UBlueprint>(nullptr, *ObjectPath(Path, false));
@@ -175,6 +187,10 @@ FString FThomasEditorBlueprintService::BuildSummaryJson(
     const FString& PropertyNamesJson,
     bool bIncludeComponents)
 {
+    if (!IsProductionBlueprintPath(BlueprintPath))
+    {
+        return Error(TEXT("path_denied"), BlueprintPath);
+    }
     UBlueprint* Blueprint = LoadBlueprint(BlueprintPath);
     if (!Blueprint)
     {
@@ -238,6 +254,16 @@ FString FThomasEditorBlueprintService::ApplyPatchJson(
     bool bAllowDestructiveReparent,
     bool bCompileAndSave)
 {
+    if (GEditor && GEditor->PlayWorld)
+    {
+        return Error(
+            TEXT("pie_active"),
+            TEXT("Blueprint mutation is disabled while PIE is active."));
+    }
+    if (!IsProductionBlueprintPath(BlueprintPath))
+    {
+        return Error(TEXT("path_denied"), BlueprintPath);
+    }
     UBlueprint* Blueprint = LoadBlueprint(BlueprintPath);
     if (!Blueprint)
     {

@@ -840,6 +840,11 @@ public:
         PurgeExpiredPlans();
         FThomasPCGPatchRequest Request = InputRequest;
         Request.AssetPath = NormalizePath(Request.AssetPath);
+        if (!IsAllowedPath(Request.AssetPath))
+        {
+            return MakeError<FThomasPCGPlanResult>(
+                TEXT("asset_path_not_allowed"), Request.AssetPath);
+        }
         UPCGGraphInterface* Interface = FindGraphInterface(Request.AssetPath);
         UPCGGraph* Graph = Interface ? Interface->GetMutablePCGGraph() : nullptr;
         if (!Interface || !Graph)
@@ -1247,6 +1252,11 @@ public:
         {
             return MakeError<FThomasPCGApplyResult>(
                 TEXT("plan_not_found"), TEXT("Plan is missing, expired, or already consumed."));
+        }
+        if (!IsAllowedPath(Plan.Request.AssetPath))
+        {
+            return MakeError<FThomasPCGApplyResult>(
+                TEXT("asset_path_not_allowed"), Plan.Request.AssetPath);
         }
         UPCGGraphInterface* Interface = FindGraphInterface(Plan.Request.AssetPath);
         UPCGGraph* Graph = Interface ? Interface->GetMutablePCGGraph() : nullptr;

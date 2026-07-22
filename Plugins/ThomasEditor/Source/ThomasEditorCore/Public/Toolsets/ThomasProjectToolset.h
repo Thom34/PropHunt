@@ -28,4 +28,8 @@ public:
     /** Applies a fresh project-plugin plan and saves PropHunt.uproject. */
     UFUNCTION(meta = (AICallable), Category = "ThomasEditor|Project")
     static FThomasPluginChangeApplyResult ApplyPluginPlan(const FString& PlanId);
+
+#if WITH_DEV_AUTOMATION_TESTS
+    static bool ExpirePluginPlanForTests(const FString& PlanId);
+#endif
 };

@@ -76,4 +76,8 @@ public:
     virtual FThomasWorldPatchApplyResult ApplyWorldPlan(
         const FString& PlanId,
         bool bSave) = 0;
+
+#if WITH_DEV_AUTOMATION_TESTS
+    virtual void SetForceRendererConfigSaveFailureForTests(bool bForceFailure) = 0;
+#endif
 };

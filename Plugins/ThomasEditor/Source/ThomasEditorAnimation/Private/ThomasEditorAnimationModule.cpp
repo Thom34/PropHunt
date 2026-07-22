@@ -14809,6 +14809,10 @@ public:
         return Result;
     }
 
+#if PLATFORM_WINDOWS
+#pragma warning(push)
+#pragma warning(disable: 4883)
+#endif
     virtual FThomasAnimationPlanResult PlanAnimationPatch(
         const FThomasAnimationPatchRequest& InputRequest) override
     {
@@ -15025,6 +15029,7 @@ public:
         }
         TSet<FName> PlannedSections;
         TSet<FName> PlannedSlots;
+        TMap<FName, int32> PlannedMontageSegmentCounts;
         if (Montage)
         {
             for (const FCompositeSection& Section : Montage->CompositeSections)
@@ -15034,6 +15039,9 @@ public:
             for (const FSlotAnimationTrack& Slot : Montage->SlotAnimTracks)
             {
                 PlannedSlots.Add(Slot.SlotName);
+                PlannedMontageSegmentCounts.Add(
+                    Slot.SlotName,
+                    Slot.AnimTrack.AnimSegments.Num());
             }
         }
         TMap<FString, TSet<FString>> PlannedStates;
@@ -18557,10 +18565,12 @@ public:
             if (Action == TEXT("add_montage_slot"))
             {
                 PlannedSlots.Add(FName(Operation.SlotName));
+                PlannedMontageSegmentCounts.Add(FName(Operation.SlotName), 0);
             }
             else if (Action == TEXT("remove_montage_slot"))
             {
                 PlannedSlots.Remove(FName(Operation.SlotName));
+                PlannedMontageSegmentCounts.Remove(FName(Operation.SlotName));
             }
             if (Action == TEXT("add_montage_segment"))
             {
@@ -18574,16 +18584,20 @@ public:
                     return MakeError<FThomasAnimationPlanResult>(
                         TEXT("invalid_montage_segment"), Operation.ReferencedAssetPath);
                 }
+                ++PlannedMontageSegmentCounts.FindChecked(FName(Operation.SlotName));
             }
             if (Action == TEXT("remove_montage_segment"))
             {
-                const int32 SlotIndex = FindMontageSlot(*Montage, Operation.SlotName);
-                if (!Montage->SlotAnimTracks.IsValidIndex(SlotIndex)
-                    || !Montage->SlotAnimTracks[SlotIndex].AnimTrack.AnimSegments.IsValidIndex(Operation.Index))
+                int32* PlannedSegmentCount = PlannedMontageSegmentCounts.Find(
+                    FName(Operation.SlotName));
+                if (!PlannedSegmentCount
+                    || Operation.Index < 0
+                    || Operation.Index >= *PlannedSegmentCount)
                 {
                     return MakeError<FThomasAnimationPlanResult>(
                         TEXT("montage_segment_not_found"), FString::FromInt(Operation.Index));
                 }
+                --*PlannedSegmentCount;
             }
             if ((Action == TEXT("add_socket") || Action == TEXT("remove_socket")) && !Skeleton)
             {
@@ -18610,6 +18624,9 @@ public:
         Plan.CreatedAtSeconds = FPlatformTime::Seconds();
         return Result;
     }
+#if PLATFORM_WINDOWS
+#pragma warning(pop)
+#endif
 
     virtual FThomasAnimationApplyResult ApplyAnimationPlan(
         const FString& PlanId,
@@ -20941,31 +20958,50 @@ public:
             }
             else if (Action == TEXT("remove_montage_slot"))
             {
-                Montage->SlotAnimTracks.RemoveAt(
-                    FindMontageSlot(*Montage, Operation.SlotName), 1, EAllowShrinking::No);
+                const int32 SlotIndex = FindMontageSlot(*Montage, Operation.SlotName);
+                bOperationOk = Montage->SlotAnimTracks.IsValidIndex(SlotIndex);
+                if (bOperationOk)
+                {
+                    Montage->SlotAnimTracks.RemoveAt(
+                        SlotIndex, 1, EAllowShrinking::No);
+                }
             }
             else if (Action == TEXT("add_montage_segment"))
             {
                 UAnimSequenceBase* Referenced = Cast<UAnimSequenceBase>(
                     FindAsset(Operation.ReferencedAssetPath));
-                FAnimSegment Segment;
-                Segment.SetAnimReference(Referenced, true);
-                Segment.StartPos = Operation.Time;
-                Segment.AnimStartTime = Operation.Duration;
-                Segment.AnimEndTime = Operation.EndTime;
-                Segment.AnimPlayRate = Operation.PlayRate;
-                Segment.LoopingCount = Operation.LoopCount;
+                const int32 SlotIndex = FindMontageSlot(*Montage, Operation.SlotName);
+                bOperationOk = Referenced && Montage->SlotAnimTracks.IsValidIndex(SlotIndex);
+                if (bOperationOk)
+                {
+                    FAnimSegment Segment;
+                    Segment.SetAnimReference(Referenced, true);
+                    Segment.StartPos = Operation.Time;
+                    Segment.AnimStartTime = Operation.Duration;
+                    Segment.AnimEndTime = Operation.EndTime;
+                    Segment.AnimPlayRate = Operation.PlayRate;
+                    Segment.LoopingCount = Operation.LoopCount;
 #if WITH_EDITOR
-                Segment.UpdateCachedPlayLength();
+                    Segment.UpdateCachedPlayLength();
 #endif
-                Montage->SlotAnimTracks[FindMontageSlot(*Montage, Operation.SlotName)]
-                    .AnimTrack.AnimSegments.Add(MoveTemp(Segment));
+                    Montage->SlotAnimTracks[SlotIndex]
+                        .AnimTrack.AnimSegments.Add(MoveTemp(Segment));
+                }
             }
             else if (Action == TEXT("remove_montage_segment"))
             {
-                TArray<FAnimSegment>& Segments = Montage->SlotAnimTracks[
-                    FindMontageSlot(*Montage, Operation.SlotName)].AnimTrack.AnimSegments;
-                Segments.RemoveAt(Operation.Index, 1, EAllowShrinking::No);
+                const int32 SlotIndex = FindMontageSlot(*Montage, Operation.SlotName);
+                bOperationOk = Montage->SlotAnimTracks.IsValidIndex(SlotIndex);
+                if (bOperationOk)
+                {
+                    TArray<FAnimSegment>& Segments = Montage->SlotAnimTracks[
+                        SlotIndex].AnimTrack.AnimSegments;
+                    bOperationOk = Segments.IsValidIndex(Operation.Index);
+                    if (bOperationOk)
+                    {
+                        Segments.RemoveAt(Operation.Index, 1, EAllowShrinking::No);
+                    }
+                }
             }
             else if (Action == TEXT("add_socket"))
             {

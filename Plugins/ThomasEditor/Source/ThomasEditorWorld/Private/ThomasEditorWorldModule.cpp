@@ -62,6 +62,10 @@ constexpr int32 MaxLandscapeRegionSamples = 257 * 257;
 constexpr int32 MaxLandscapeReturnedSamples = 4096;
 constexpr double PlanLifetimeSeconds = 300.0;
 
+#if WITH_DEV_AUTOMATION_TESTS
+int32 GRendererConfigSaveFailuresRemaining = 0;
+#endif
+
 struct FWorldPatchPlan
 {
     FThomasWorldPatchRequest Request;
@@ -1511,6 +1515,101 @@ FString ExportObjectProperty(const UObject* Object, const FProperty* Property)
     return Value;
 }
 
+bool HasMixedRendererAndWorldOperations(const TArray<FThomasWorldOperation>& Operations)
+{
+    bool bHasRendererOperation = false;
+    bool bHasWorldOperation = false;
+    for (const FThomasWorldOperation& Operation : Operations)
+    {
+        if (Operation.Action.Equals(TEXT("set_renderer_property"), ESearchCase::IgnoreCase))
+        {
+            bHasRendererOperation = true;
+        }
+        else
+        {
+            bHasWorldOperation = true;
+        }
+    }
+    return bHasRendererOperation && bHasWorldOperation;
+}
+
+bool PersistRendererConfig(URendererSettings* Settings)
+{
+#if WITH_DEV_AUTOMATION_TESTS
+    if (GRendererConfigSaveFailuresRemaining > 0)
+    {
+        --GRendererConfigSaveFailuresRemaining;
+        return false;
+    }
+#endif
+    return Settings && Settings->TryUpdateDefaultConfigFile();
+}
+
+struct FRendererConfigSnapshot
+{
+    FString Filename;
+    TArray64<uint8> Bytes;
+    bool bExisted = false;
+    bool bCaptured = false;
+};
+
+bool CaptureRendererConfig(
+    const URendererSettings* Settings,
+    FRendererConfigSnapshot& OutSnapshot)
+{
+    if (!Settings)
+    {
+        return false;
+    }
+    OutSnapshot.Filename = FPaths::ConvertRelativePathToFull(
+        Settings->GetDefaultConfigFilename());
+    OutSnapshot.bExisted = IFileManager::Get().FileExists(*OutSnapshot.Filename);
+    OutSnapshot.bCaptured = !OutSnapshot.bExisted
+        || FFileHelper::LoadFileToArray(
+            OutSnapshot.Bytes, *OutSnapshot.Filename, FILEREAD_Silent);
+    return OutSnapshot.bCaptured;
+}
+
+bool RestoreRendererConfig(const FRendererConfigSnapshot& Snapshot)
+{
+    if (!Snapshot.bCaptured || Snapshot.Filename.IsEmpty())
+    {
+        return false;
+    }
+    if (Snapshot.bExisted)
+    {
+        return FFileHelper::SaveArrayToFile(
+            Snapshot.Bytes, *Snapshot.Filename);
+    }
+    return !IFileManager::Get().FileExists(*Snapshot.Filename)
+        || IFileManager::Get().Delete(*Snapshot.Filename, false, true, true);
+}
+
+bool RestoreRendererProperties(
+    URendererSettings* Settings,
+    const TMap<FName, FString>& PreviousValues,
+    const bool bPersistConfig)
+{
+    if (!Settings)
+    {
+        return false;
+    }
+    for (const TPair<FName, FString>& Pair : PreviousValues)
+    {
+        FProperty* Property = FindFProperty<FProperty>(
+            URendererSettings::StaticClass(), Pair.Key);
+        if (!IsSupportedRendererProperty(Property)
+            || !Property->ImportText_InContainer(
+                *Pair.Value, Settings, Settings, PPF_None))
+        {
+            return false;
+        }
+        FPropertyChangedEvent Event(Property, EPropertyChangeType::ValueSet);
+        Settings->PostEditChangeProperty(Event);
+    }
+    return !bPersistConfig || PersistRendererConfig(Settings);
+}
+
 bool IsSupportedPostProcessProperty(const FProperty* Property)
 {
     return Property
@@ -1636,6 +1735,14 @@ bool SaveWorld(UWorld* World)
 class FThomasEditorWorldModule final : public IThomasEditorWorldProviderModule
 {
 public:
+#if WITH_DEV_AUTOMATION_TESTS
+    virtual void SetForceRendererConfigSaveFailureForTests(
+        const bool bForceFailure) override
+    {
+        GRendererConfigSaveFailuresRemaining = bForceFailure ? 1 : 0;
+    }
+#endif
+
     virtual void ShutdownModule() override
     {
         for (TPair<FString, FEnvironmentBuildJob>& Pair : EnvironmentJobs)
@@ -3496,6 +3603,12 @@ public:
             return MakeError<FThomasWorldPatchPlanResult>(
                 TEXT("invalid_batch_size"), TEXT("World batch must contain 1 to 50 operations."));
         }
+        if (HasMixedRendererAndWorldOperations(Request.Operations))
+        {
+            return MakeError<FThomasWorldPatchPlanResult>(
+                TEXT("mixed_renderer_world_batch_denied"),
+                TEXT("Renderer config and map mutations require separate plans so each can roll back atomically."));
+        }
 
         bool bDestructive = false;
         TArray<FString> Preview;
@@ -4016,6 +4129,12 @@ public:
             return MakeError<FThomasWorldPatchApplyResult>(
                 TEXT("revision_conflict"), CurrentRevision);
         }
+        if (HasMixedRendererAndWorldOperations(Plan.Request.Operations))
+        {
+            return MakeError<FThomasWorldPatchApplyResult>(
+                TEXT("mixed_renderer_world_batch_denied"),
+                TEXT("Renderer config and map mutations require separate plans so each can roll back atomically."));
+        }
 
         FThomasWorldPatchApplyResult Result;
         Result.MapPath = Plan.Request.MapPath;
@@ -4023,7 +4142,23 @@ public:
         bool bApplied = true;
         bool bMapChanged = false;
         bool bRendererChanged = false;
+        TMap<FName, FString> PreviousRendererValues;
+        FRendererConfigSnapshot PreviousRendererConfig;
         FString Error;
+        const bool bHasRendererOperation = Plan.Request.Operations.ContainsByPredicate(
+            [](const FThomasWorldOperation& Operation)
+            {
+                return Operation.Action.Equals(
+                    TEXT("set_renderer_property"), ESearchCase::IgnoreCase);
+            });
+        if (bHasRendererOperation
+            && !CaptureRendererConfig(
+                GetDefault<URendererSettings>(), PreviousRendererConfig))
+        {
+            return MakeError<FThomasWorldPatchApplyResult>(
+                TEXT("config_snapshot_failed"),
+                TEXT("DefaultEngine.ini could not be captured before the renderer mutation."));
+        }
         {
             const FScopedTransaction Transaction(
                 NSLOCTEXT("ThomasEditor", "ApplyWorldPatch", "ThomasEditor World Patch"));
@@ -4045,6 +4180,8 @@ public:
                         && CurrentValue == Operation.ExpectedValue;
                     if (bApplied)
                     {
+                        PreviousRendererValues.FindOrAdd(
+                            Property->GetFName(), CurrentValue);
                         Settings->Modify();
                         bApplied = Property->ImportText_InContainer(
                             *Operation.Value, Settings, Settings, PPF_None) != nullptr;
@@ -4663,15 +4800,34 @@ public:
                     }
                     bMapChanged = true;
                 }
+                if (!bApplied)
+                {
+                    Error = Operation.Action + TEXT(" failed");
+                    break;
+                }
                 ++Result.AppliedOperationCount;
             }
         }
 
         if (!bApplied)
         {
-            Result.bRolledBack = GEditor && GEditor->UndoTransaction();
-            Result.Code = TEXT("apply_failed");
-            Result.Message = Error.Left(1200);
+            if (!PreviousRendererValues.IsEmpty())
+            {
+                Result.bRolledBack = RestoreRendererProperties(
+                    GetMutableDefault<URendererSettings>(),
+                    PreviousRendererValues,
+                    false);
+            }
+            else
+            {
+                Result.bRolledBack = GEditor && GEditor->UndoTransaction();
+            }
+            Result.Code = Result.bRolledBack
+                ? TEXT("apply_failed")
+                : TEXT("rollback_failed");
+            Result.Message = Result.bRolledBack
+                ? Error.Left(1200)
+                : TEXT("World apply failed and the previous state could not be fully restored.");
             Result.RevisionAfter = BuildWorldRevision(World);
             return Result;
         }
@@ -4680,7 +4836,8 @@ public:
             bool bPersisted = true;
             if (bRendererChanged)
             {
-                bPersisted = GetMutableDefault<URendererSettings>()->TryUpdateDefaultConfigFile();
+                bPersisted = PersistRendererConfig(
+                    GetMutableDefault<URendererSettings>());
             }
             if (bPersisted && bMapChanged)
             {
@@ -4689,9 +4846,32 @@ public:
             Result.bSaved = bPersisted;
             if (!Result.bSaved)
             {
-                Result.bRolledBack = GEditor && GEditor->UndoTransaction();
-                Result.Code = TEXT("save_failed");
-                Result.Message = TEXT("Map save failed; the scoped actor edit was undone.");
+                if (bRendererChanged)
+                {
+                    const bool bPropertiesRestored = RestoreRendererProperties(
+                        GetMutableDefault<URendererSettings>(),
+                        PreviousRendererValues,
+                        false);
+                    const bool bConfigRestored = RestoreRendererConfig(
+                        PreviousRendererConfig);
+                    Result.bRolledBack = bPropertiesRestored && bConfigRestored;
+                    Result.Code = Result.bRolledBack
+                        ? TEXT("save_failed")
+                        : TEXT("rollback_failed");
+                    Result.Message = Result.bRolledBack
+                        ? TEXT("Renderer config save failed; previous values were restored in memory and config.")
+                        : TEXT("Renderer config save failed and the previous config could not be fully restored.");
+                }
+                else
+                {
+                    Result.bRolledBack = GEditor && GEditor->UndoTransaction();
+                    Result.Code = Result.bRolledBack
+                        ? TEXT("save_failed")
+                        : TEXT("rollback_failed");
+                    Result.Message = Result.bRolledBack
+                        ? TEXT("Map save failed; the scoped world edit was undone.")
+                        : TEXT("Map save failed and the scoped world edit could not be undone.");
+                }
                 Result.RevisionAfter = BuildWorldRevision(World);
                 return Result;
             }

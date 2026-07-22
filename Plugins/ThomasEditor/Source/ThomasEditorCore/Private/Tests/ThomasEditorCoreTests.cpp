@@ -3,6 +3,7 @@
 #include "HAL/FileManager.h"
 #include "AssetRegistry/AssetRegistryModule.h"
 #include "AssetRegistry/IAssetRegistry.h"
+#include "Animation/AnimMontage.h"
 #include "Animation/Skeleton.h"
 #include "Animation/BlendProfile.h"
 #include "Animation/MirrorDataTable.h"
@@ -13,6 +14,7 @@
 #include "Engine/SCS_Node.h"
 #include "Engine/SimpleConstructionScript.h"
 #include "Engine/SkeletalMesh.h"
+#include "Engine/StaticMesh.h"
 #include "Engine/World.h"
 #include "GameFramework/Actor.h"
 #include "HAL/PlatformProcess.h"
@@ -26,6 +28,7 @@
 #include "PhysicsEngine/PhysicsAsset.h"
 #include "ThomasEditorCoreModule.h"
 #include "ThomasEditorLegacyProvider.h"
+#include "ThomasEditorWorldProvider.h"
 #include "Toolsets/ThomasAssetsToolset.h"
 #include "Toolsets/ThomasBlueprintToolset.h"
 #include "Toolsets/ThomasCompatibilityToolset.h"
@@ -9339,6 +9342,10 @@ static void CleanupR45TemporaryAnimationFixtures(
     }
 }
 
+#if PLATFORM_WINDOWS
+#pragma warning(push)
+#pragma warning(disable: 4883)
+#endif
 bool FThomasEditorNativeCoreTest::RunTest(const FString& Parameters)
 {
     TestTrue(
@@ -9504,12 +9511,30 @@ bool FThomasEditorNativeCoreTest::RunTest(const FString& Parameters)
     TestTrue(
         TEXT("Compatibility Blueprint summary succeeds"),
         BlueprintSummaryJson.Contains(TEXT("\"ok\":true")));
+    TestTrue(
+        TEXT("Compatibility Blueprint summary refuses non-project assets"),
+        UThomasCompatibilityToolset::BlueprintSummary(
+            TEXT("/Engine/EngineMaterials/DefaultMaterial"), {}, false)
+            .Contains(TEXT("\"code\":\"path_denied\"")));
 
     const FString BlueprintNoOpJson = UThomasCompatibilityToolset::BlueprintPatch(
         TEXT("/Game/PropHunt/Core/BP_PH_PlayerState"), TEXT(""), {}, false, false);
     TestTrue(
         TEXT("Compatibility Blueprint no-op is accepted"),
         BlueprintNoOpJson.Contains(TEXT("\"ok\":true")));
+    TestTrue(
+        TEXT("Compatibility Blueprint patch refuses non-project assets"),
+        UThomasCompatibilityToolset::BlueprintPatch(
+            TEXT("/Engine/EngineMaterials/DefaultMaterial"),
+            TEXT(""), {}, false, false)
+            .Contains(TEXT("\"code\":\"path_denied\"")));
+
+    FThomasPCGPatchRequest OutsidePCGRequest;
+    OutsidePCGRequest.AssetPath = TEXT("/Engine/Transient/PCG_OutsideProject");
+    TestEqual(
+        TEXT("PCG patch implementation refuses a path outside PropHunt before asset lookup"),
+        UThomasDomainsToolset::PlanPCGPatch(OutsidePCGRequest).Code,
+        FString(TEXT("asset_path_not_allowed")));
 
     const FString DataAssetSummaryJson = UThomasCompatibilityToolset::DataAssetSummary(
         TEXT("/Game/PropHunt/Data/DA_PH_MatchRules_Default"), {TEXT("ObjectiveScore")});
@@ -9569,7 +9594,8 @@ bool FThomasEditorNativeCoreTest::RunTest(const FString& Parameters)
                 || AssetName.StartsWith(TEXT("SPR_TE_Native_"))
                 || AssetName.StartsWith(TEXT("FB_TE_Native_"))
                 || AssetName.StartsWith(TEXT("PCG_TE_Native_"))
-                || AssetName.StartsWith(TEXT("PCGI_TE_Native_")))
+                || AssetName.StartsWith(TEXT("PCGI_TE_Native_"))
+                || AssetName.StartsWith(TEXT("SM_TE_Nanite_")))
             {
                 if (UObject* Asset = AssetData.GetAsset())
                 {
@@ -9715,6 +9741,11 @@ bool FThomasEditorNativeCoreTest::RunTest(const FString& Parameters)
     TestTrue(TEXT("Widget Blueprint was created"), WidgetApply.bCreated);
     TestTrue(TEXT("Widget Blueprint was compiled"), WidgetApply.bCompiled);
     TestTrue(TEXT("Widget Blueprint was saved"), WidgetApply.bSaved);
+    TestEqual(
+        TEXT("A consumed Blueprint plan cannot be replayed"),
+        UThomasBlueprintToolset::ApplyBlueprintPlan(
+            WidgetPlan.PlanId, true, true).Code,
+        FString(TEXT("plan_not_found")));
 
     const FThomasBlueprintInspectionResult WidgetInspection =
         UThomasBlueprintToolset::InspectBlueprint(WidgetTestPath, true, 50);
@@ -9748,11 +9779,41 @@ bool FThomasEditorNativeCoreTest::RunTest(const FString& Parameters)
                         });
             }));
 
+    FThomasBlueprintBatchRequest ConsoleCallRequest;
+    ConsoleCallRequest.AssetPath = WidgetTestPath;
+    ConsoleCallRequest.ExpectedRevision = WidgetInspection.Revision;
+    ConsoleCallRequest.bWidgetBlueprint = true;
+    ConsoleCallRequest.bConfirmDestructive = true;
+    FThomasBlueprintOperation ConsoleCallOperation;
+    ConsoleCallOperation.Action = TEXT("add_call_function");
+    ConsoleCallOperation.GraphName = TEXT("EventGraph");
+    ConsoleCallOperation.Handle = TEXT("denied_console_call");
+    ConsoleCallOperation.ClassPath = TEXT("/Script/Engine.KismetSystemLibrary");
+    ConsoleCallOperation.FunctionName = TEXT("ExecuteConsoleCommand");
+    ConsoleCallRequest.Operations.Add(ConsoleCallOperation);
+    TestEqual(
+        TEXT("Blueprint authoring rejects ExecuteConsoleCommand despite R2 confirmation"),
+        UThomasBlueprintToolset::PlanBlueprintBatch(ConsoleCallRequest).Code,
+        FString(TEXT("function_not_allowed")));
+
     const FThomasBlueprintValidationResult WidgetValidation =
         UThomasBlueprintToolset::ValidateBlueprint(
             WidgetTestPath,
             {TEXT("TestRoot"), TEXT("TestLabel"), TEXT("TestButton")});
     TestTrue(TEXT("Created Widget Blueprint contract validates"), WidgetValidation.bOk);
+    const FThomasValidationResult NativeWidgetValidation =
+        UThomasValidationToolset::ValidateAssets({WidgetTestPath}, 20);
+    TestTrue(
+        TEXT("Native Data Validation provider validates the temporary Widget Blueprint"),
+        NativeWidgetValidation.bOk
+            && NativeWidgetValidation.RequestedCount == 1
+            && NativeWidgetValidation.CheckedCount == 1);
+    const FThomasValidationResult NativeMapCheck =
+        UThomasValidationToolset::RunCurrentMapCheck(50);
+    TestTrue(
+        TEXT("Native Map Check provider executes against the current PropHunt map"),
+        NativeMapCheck.CheckedCount == 1
+            && NativeMapCheck.Scope.StartsWith(TEXT("/Game/PropHunt/")));
 
     FThomasBlueprintBatchRequest WidgetAnimationRequest;
     WidgetAnimationRequest.AssetPath = WidgetTestPath;
@@ -12081,6 +12142,103 @@ bool FThomasEditorNativeCoreTest::RunTest(const FString& Parameters)
                 UThomasWorldToolset::PlanWorldPatch(RendererRequest);
             TestTrue(TEXT("Renderer/Lumen guarded plan succeeds"), RendererPlan.bOk);
             TestEqual(TEXT("Renderer/Lumen guarded plan is R2"), RendererPlan.Risk, FString(TEXT("R2")));
+
+            FThomasWorldPatchRequest MixedRendererWorldRequest = RendererRequest;
+            FThomasWorldOperation MixedActorOperation;
+            MixedActorOperation.Action = TEXT("set_actor_label");
+            MixedActorOperation.ActorPath = PostProcessActorPath;
+            MixedActorOperation.Label = TEXT("ThomasEditor mixed-batch refusal fixture");
+            MixedRendererWorldRequest.Operations.Add(MixedActorOperation);
+            TestEqual(
+                TEXT("Renderer config and map mutations cannot share one plan"),
+                UThomasWorldToolset::PlanWorldPatch(
+                    MixedRendererWorldRequest).Code,
+                FString(TEXT("mixed_renderer_world_batch_denied")));
+        }
+
+        const FThomasPropertyRecord* BoolRendererSetting =
+            LumenInspection.RendererSettings.FindByPredicate(
+                [](const FThomasPropertyRecord& Property)
+                {
+                    return Property.Name == TEXT("bGenerateMeshDistanceFields")
+                        && Property.bEditable
+                        && (Property.Value.Equals(TEXT("true"), ESearchCase::IgnoreCase)
+                            || Property.Value.Equals(TEXT("false"), ESearchCase::IgnoreCase));
+                });
+        TestNotNull(
+            TEXT("Renderer rollback regression finds the mutable distance-field setting"),
+            BoolRendererSetting);
+        if (BoolRendererSetting)
+        {
+            const FThomasWorldInspectionResult RendererWorld =
+                UThomasWorldToolset::InspectCurrentLevel(TEXT(""), false, 10);
+            FThomasWorldPatchRequest RollbackRequest;
+            RollbackRequest.MapPath = RendererWorld.MapPath;
+            RollbackRequest.ExpectedRevision = RendererWorld.Revision;
+            RollbackRequest.bConfirmDestructive = true;
+            FThomasWorldOperation ToggleRendererSetting;
+            ToggleRendererSetting.Action = TEXT("set_renderer_property");
+            ToggleRendererSetting.PropertyName = BoolRendererSetting->Name;
+            ToggleRendererSetting.ExpectedValue = BoolRendererSetting->Value;
+            ToggleRendererSetting.Value = BoolRendererSetting->Value.Equals(
+                TEXT("true"), ESearchCase::IgnoreCase)
+                ? TEXT("False") : TEXT("True");
+            RollbackRequest.Operations.Add(ToggleRendererSetting);
+            const FThomasWorldPatchPlanResult RollbackPlan =
+                UThomasWorldToolset::PlanWorldPatch(RollbackRequest);
+            TestTrue(
+                TEXT("Renderer rollback regression plan succeeds"),
+                RollbackPlan.bOk);
+            IThomasEditorWorldProviderModule* WorldProvider =
+                FModuleManager::GetModulePtr<IThomasEditorWorldProviderModule>(
+                    TEXT("ThomasEditorWorld"));
+            TestNotNull(
+                TEXT("World provider exposes the renderer save-failure test seam"),
+                WorldProvider);
+            if (RollbackPlan.bOk && WorldProvider)
+            {
+                const FString RendererConfigFilename = FPaths::ConvertRelativePathToFull(
+                    FPaths::ProjectConfigDir() / TEXT("DefaultEngine.ini"));
+                TArray64<uint8> RendererConfigBeforeFailure;
+                const bool bCapturedRendererConfig = FFileHelper::LoadFileToArray(
+                    RendererConfigBeforeFailure,
+                    *RendererConfigFilename,
+                    FILEREAD_Silent);
+                TestTrue(
+                    TEXT("Renderer rollback regression captures DefaultEngine.ini before apply"),
+                    bCapturedRendererConfig);
+                WorldProvider->SetForceRendererConfigSaveFailureForTests(true);
+                const FThomasWorldPatchApplyResult FailedRendererSave =
+                    UThomasWorldToolset::ApplyWorldPlan(
+                        RollbackPlan.PlanId, true);
+                TestTrue(
+                    TEXT("Renderer config save failure explicitly restores the previous value"),
+                    !FailedRendererSave.bOk
+                        && FailedRendererSave.Code == TEXT("save_failed")
+                        && FailedRendererSave.bRolledBack);
+                const FThomasLightingInspectionResult AfterRendererRollback =
+                    UThomasWorldToolset::InspectLighting();
+                const FThomasPropertyRecord* RestoredSetting =
+                    AfterRendererRollback.RendererSettings.FindByPredicate(
+                        [BoolRendererSetting](const FThomasPropertyRecord& Property)
+                        {
+                            return Property.Name == BoolRendererSetting->Name;
+                        });
+                TestTrue(
+                    TEXT("Renderer rollback readback matches the exact pre-apply value"),
+                    RestoredSetting
+                        && RestoredSetting->Value == BoolRendererSetting->Value);
+                TArray64<uint8> RendererConfigAfterFailure;
+                const bool bReadRendererConfigAfterFailure = FFileHelper::LoadFileToArray(
+                    RendererConfigAfterFailure,
+                    *RendererConfigFilename,
+                    FILEREAD_Silent);
+                TestTrue(
+                    TEXT("Renderer rollback restores DefaultEngine.ini byte-for-byte"),
+                    bCapturedRendererConfig
+                        && bReadRendererConfigAfterFailure
+                        && RendererConfigAfterFailure == RendererConfigBeforeFailure);
+            }
         }
     }
 
@@ -12147,12 +12305,101 @@ bool FThomasEditorNativeCoreTest::RunTest(const FString& Parameters)
                     TEXT("stale-revision"),
                     !StaticMeshInspection.bNaniteEnabled).Code,
                 FString(TEXT("revision_conflict")));
-            const FThomasNanitePlanResult NanitePlan = UThomasRenderToolset::PlanNanite(
-                StaticMeshInventory.Items[0].AssetPath,
-                StaticMeshInspection.Revision,
-                !StaticMeshInspection.bNaniteEnabled);
-            TestTrue(TEXT("Nanite rebuild preflight succeeds on the exact mesh revision"), NanitePlan.bOk);
-            TestTrue(TEXT("Nanite plan reports rebuild warnings"), !NanitePlan.Warnings.IsEmpty());
+        }
+
+        const FString SourceMeshObjectPath =
+            StaticMeshInventory.Items[0].AssetPath.Contains(TEXT("."))
+            ? StaticMeshInventory.Items[0].AssetPath
+            : StaticMeshInventory.Items[0].AssetPath + TEXT(".")
+                + FPackageName::GetLongPackageAssetName(
+                    StaticMeshInventory.Items[0].AssetPath);
+        UStaticMesh* SourceMesh = LoadObject<UStaticMesh>(
+            nullptr, *SourceMeshObjectPath);
+        const FString NaniteFixturePath =
+            TEXT("/Game/PropHunt/Tests/ThomasEditor/SM_TE_Nanite_")
+            + FGuid::NewGuid().ToString(EGuidFormats::Digits);
+        UPackage* NaniteFixturePackage = CreatePackage(*NaniteFixturePath);
+        UStaticMesh* NaniteFixture = SourceMesh && NaniteFixturePackage
+            ? Cast<UStaticMesh>(StaticDuplicateObject(
+                SourceMesh,
+                NaniteFixturePackage,
+                FName(*FPackageName::GetLongPackageAssetName(
+                    NaniteFixturePath)),
+                RF_AllFlags))
+            : nullptr;
+        if (NaniteFixture)
+        {
+            NaniteFixture->SetFlags(
+                RF_Public | RF_Standalone | RF_Transactional);
+            FAssetRegistryModule::AssetCreated(NaniteFixture);
+            NaniteFixturePackage->MarkPackageDirty();
+        }
+        FSavePackageArgs NaniteFixtureSaveArgs;
+        NaniteFixtureSaveArgs.TopLevelFlags = RF_Public | RF_Standalone;
+        NaniteFixtureSaveArgs.SaveFlags = SAVE_NoError;
+        NaniteFixtureSaveArgs.Error = GError;
+        const FString NaniteFixtureFilename =
+            FPackageName::LongPackageNameToFilename(
+                NaniteFixturePath,
+                FPackageName::GetAssetPackageExtension());
+        TestTrue(
+            TEXT("Nanite test mesh duplicates and saves through Unreal"),
+            NaniteFixture
+                && UPackage::SavePackage(
+                    NaniteFixturePackage,
+                    NaniteFixture,
+                    *NaniteFixtureFilename,
+                    NaniteFixtureSaveArgs));
+        if (NaniteFixture)
+        {
+            FThomasStaticMeshInspectionResult NaniteBefore =
+                UThomasRenderToolset::InspectStaticMesh(NaniteFixturePath);
+            const bool bOriginalNaniteEnabled = NaniteBefore.bNaniteEnabled;
+            const FThomasNanitePlanResult NanitePlan =
+                UThomasRenderToolset::PlanNanite(
+                    NaniteFixturePath,
+                    NaniteBefore.Revision,
+                    !bOriginalNaniteEnabled);
+            TestTrue(
+                TEXT("Nanite rebuild preflight succeeds on the temporary exact mesh revision"),
+                NanitePlan.bOk && !NanitePlan.Warnings.IsEmpty());
+            const FThomasNaniteApplyResult NaniteApply =
+                UThomasRenderToolset::ApplyNanitePlan(
+                    NanitePlan.PlanId, true);
+            TestTrue(
+                TEXT("Nanite apply rebuilds and saves the temporary mesh"),
+                NaniteApply.bOk
+                    && NaniteApply.bSaved
+                    && NaniteApply.bNaniteEnabled == !bOriginalNaniteEnabled);
+            NaniteBefore = UThomasRenderToolset::InspectStaticMesh(
+                NaniteFixturePath);
+            const FThomasNanitePlanResult NaniteRestorePlan =
+                UThomasRenderToolset::PlanNanite(
+                    NaniteFixturePath,
+                    NaniteBefore.Revision,
+                    bOriginalNaniteEnabled);
+            TestTrue(
+                TEXT("Nanite restoration plan succeeds"),
+                NaniteRestorePlan.bOk);
+            if (NaniteRestorePlan.bOk)
+            {
+                const FThomasNaniteApplyResult NaniteRestoreApply =
+                    UThomasRenderToolset::ApplyNanitePlan(
+                        NaniteRestorePlan.PlanId, true);
+                TestTrue(
+                    TEXT("Nanite restoration applies and saves the original state"),
+                    NaniteRestoreApply.bOk
+                        && NaniteRestoreApply.bSaved
+                        && NaniteRestoreApply.bNaniteEnabled
+                            == bOriginalNaniteEnabled);
+            }
+            TestEqual(
+                TEXT("Temporary Nanite mesh is deleted through Unreal"),
+                ObjectTools::DeleteObjectsUnchecked({NaniteFixture}),
+                1);
+            TestFalse(
+                TEXT("Temporary Nanite mesh leaves no file"),
+                IFileManager::Get().FileExists(*NaniteFixtureFilename));
         }
     }
 
@@ -12164,6 +12411,29 @@ bool FThomasEditorNativeCoreTest::RunTest(const FString& Parameters)
         TEXT("Self plugin mutation remains denied"),
         UThomasProjectToolset::PlanPluginEnabled(TEXT("ThomasEditor"), false, true).Code
             == TEXT("self_mutation_denied"));
+    TestEqual(
+        TEXT("An enabled required dependency cannot be disabled"),
+        UThomasProjectToolset::PlanPluginEnabled(
+            TEXT("ModelContextProtocol"), false, true).Code,
+        FString(TEXT("required_plugin_disable_denied")));
+    const FThomasPluginChangePlanResult ExpiringPluginPlan =
+        UThomasProjectToolset::PlanPluginEnabled(
+            TEXT("AndroidFileServer"), true, true);
+    TestTrue(
+        TEXT("An explicitly referenced disabled engine plugin can produce a guarded plan"),
+        ExpiringPluginPlan.bOk);
+    if (ExpiringPluginPlan.bOk)
+    {
+        TestTrue(
+            TEXT("Plugin plan test seam expires the exact plan"),
+            UThomasProjectToolset::ExpirePluginPlanForTests(
+                ExpiringPluginPlan.PlanId));
+        TestEqual(
+            TEXT("Expired plugin plans are distinguished from missing plans"),
+            UThomasProjectToolset::ApplyPluginPlan(
+                ExpiringPluginPlan.PlanId).Code,
+            FString(TEXT("plan_expired")));
+    }
 
     const FThomasDomainInventoryResult AnimationInventory =
         UThomasDomainsToolset::InspectAnimationAssets(TEXT("/Game/PropHunt"), 200);
@@ -14171,6 +14441,78 @@ bool FThomasEditorNativeCoreTest::RunTest(const FString& Parameters)
         TestTrue(TEXT("Confirmed Montage removal plan succeeds"), MontageRemovalPlan.bOk);
         TestTrue(TEXT("Confirmed Montage removals apply and save"),
             UThomasDomainsToolset::ApplyAnimationPlan(MontageRemovalPlan.PlanId, true).bOk);
+
+        UAnimMontage* MontageCrashFixture = LoadObject<UAnimMontage>(
+            nullptr,
+            *(AnimMontagePath + TEXT(".")
+                + FPackageName::GetLongPackageAssetName(AnimMontagePath)));
+        TestNotNull(
+            TEXT("Montage batch-removal regression fixture loads"),
+            MontageCrashFixture);
+        if (MontageCrashFixture)
+        {
+            MontageCrashFixture->Modify();
+            FSlotAnimationTrack SegmentSlot;
+            SegmentSlot.SlotName = FName(TEXT("DefaultGroup.ThomasSegmentRegression"));
+            SegmentSlot.AnimTrack.AnimSegments.SetNum(2);
+            MontageCrashFixture->SlotAnimTracks.Add(MoveTemp(SegmentSlot));
+            MontageCrashFixture->MarkPackageDirty();
+            FSavePackageArgs SegmentFixtureSaveArgs;
+            SegmentFixtureSaveArgs.TopLevelFlags = RF_Public | RF_Standalone;
+            SegmentFixtureSaveArgs.SaveFlags = SAVE_NoError;
+            SegmentFixtureSaveArgs.Error = GError;
+            const FString SegmentFixtureFilename =
+                FPackageName::LongPackageNameToFilename(
+                    AnimMontagePath,
+                    FPackageName::GetAssetPackageExtension());
+            TestTrue(
+                TEXT("Montage batch-removal regression fixture saves"),
+                UPackage::SavePackage(
+                    MontageCrashFixture->GetOutermost(),
+                    MontageCrashFixture,
+                    *SegmentFixtureFilename,
+                    SegmentFixtureSaveArgs));
+
+            const FThomasSpecializedAssetInspectionResult SegmentFixtureInspection =
+                UThomasDomainsToolset::InspectAnimationAsset(
+                    AnimMontagePath, 200);
+            FThomasAnimationPatchRequest InvalidSegmentBatch;
+            InvalidSegmentBatch.AssetPath = AnimMontagePath;
+            InvalidSegmentBatch.ExpectedRevision = SegmentFixtureInspection.Revision;
+            InvalidSegmentBatch.bConfirmDestructive = true;
+            FThomasAnimationOperation RemoveSegmentZero;
+            RemoveSegmentZero.Action = TEXT("remove_montage_segment");
+            RemoveSegmentZero.SlotName = TEXT("DefaultGroup.ThomasSegmentRegression");
+            RemoveSegmentZero.Index = 0;
+            InvalidSegmentBatch.Operations.Add(RemoveSegmentZero);
+            FThomasAnimationOperation RemoveOriginalSegmentOne = RemoveSegmentZero;
+            RemoveOriginalSegmentOne.Index = 1;
+            InvalidSegmentBatch.Operations.Add(RemoveOriginalSegmentOne);
+            TestEqual(
+                TEXT("Montage preflight simulates earlier removals in the same batch"),
+                UThomasDomainsToolset::PlanAnimationPatch(
+                    InvalidSegmentBatch).Code,
+                FString(TEXT("montage_segment_not_found")));
+
+            FThomasAnimationPatchRequest ValidSegmentBatch = InvalidSegmentBatch;
+            ValidSegmentBatch.Operations[1].Index = 0;
+            const FThomasAnimationPlanResult ValidSegmentRemovalPlan =
+                UThomasDomainsToolset::PlanAnimationPatch(ValidSegmentBatch);
+            TestTrue(
+                TEXT("Montage sequential segment-removal plan succeeds"),
+                ValidSegmentRemovalPlan.bOk);
+            if (ValidSegmentRemovalPlan.bOk)
+            {
+                const FThomasAnimationApplyResult ValidSegmentRemovalApply =
+                    UThomasDomainsToolset::ApplyAnimationPlan(
+                        ValidSegmentRemovalPlan.PlanId, true);
+                TestTrue(
+                    TEXT("Montage sequential segment removals apply without checkf"),
+                    ValidSegmentRemovalApply.bOk
+                        && ValidSegmentRemovalApply.bSaved
+                        && ValidSegmentRemovalApply.AppliedOperationCount == 2);
+            }
+        }
 
         const FString AnimSequencePath =
             TEXT("/Game/PropHunt/Tests/ThomasEditor/AS_TE_Native_")
@@ -17958,6 +18300,9 @@ bool FThomasEditorNativeCoreTest::RunTest(const FString& Parameters)
 
     return !HasAnyErrors();
 }
+#if PLATFORM_WINDOWS
+#pragma warning(pop)
+#endif
 
 static void RunControlRigHierarchyMutationTests(
     FThomasEditorNativeCoreTest& Test,

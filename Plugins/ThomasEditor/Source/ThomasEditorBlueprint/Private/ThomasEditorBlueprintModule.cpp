@@ -67,6 +67,51 @@ bool IsAllowedPackagePath(const FString& Path)
         && !Path.StartsWith(TEXT("/Game/Developers/"));
 }
 
+bool IsConstructionScriptGraph(const FString& GraphName)
+{
+    return GraphName.Equals(TEXT("UserConstructionScript"), ESearchCase::IgnoreCase);
+}
+
+bool IsAllowedBlueprintFunction(
+    const UBlueprint* Blueprint,
+    const UClass* RequestedOwnerClass,
+    const UFunction* Function)
+{
+    if (!RequestedOwnerClass || !Function
+        || Function->HasAnyFunctionFlags(FUNC_Exec)
+        || !Function->HasAnyFunctionFlags(FUNC_BlueprintCallable | FUNC_BlueprintPure))
+    {
+        return false;
+    }
+
+    const UClass* DeclaringClass = Function->GetOuterUClass();
+    if (!DeclaringClass)
+    {
+        return false;
+    }
+    if (Blueprint
+        && (DeclaringClass == Blueprint->GeneratedClass
+            || DeclaringClass == Blueprint->SkeletonGeneratedClass))
+    {
+        return true;
+    }
+
+    const FString DeclaringPath = DeclaringClass->GetPathName();
+    if (DeclaringPath.StartsWith(TEXT("/Script/PropHunt."))
+        || DeclaringPath.StartsWith(TEXT("/Game/PropHunt/")))
+    {
+        return true;
+    }
+
+    static const TSet<FString> SafePureLibraryClasses = {
+        TEXT("/Script/Engine.KismetMathLibrary"),
+        TEXT("/Script/Engine.KismetStringLibrary"),
+        TEXT("/Script/Engine.KismetTextLibrary")
+    };
+    return Function->HasAnyFunctionFlags(FUNC_BlueprintPure)
+        && SafePureLibraryClasses.Contains(DeclaringPath);
+}
+
 FString NormalizeAssetPath(const FString& Input)
 {
     FString Path = Input.TrimStartAndEnd();
@@ -1305,6 +1350,14 @@ bool ApplyBlueprintOperation(
                 *Operation.ClassPath);
             return false;
         }
+        if (!IsAllowedBlueprintFunction(Blueprint, OwnerClass, Function))
+        {
+            OutError = FString::Printf(
+                TEXT("Function is outside the ThomasEditor call allowlist: %s on %s"),
+                *Operation.FunctionName,
+                *OwnerClass->GetPathName());
+            return false;
+        }
         CreatedNode = AddConfiguredNode<UK2Node_CallFunction>(
             Graph, Operation.PositionX, Operation.PositionY,
             [Function, OwnerClass, &Operation](UK2Node_CallFunction* Node)
@@ -2245,12 +2298,29 @@ public:
                                 : Existing->GeneratedClass.Get())
                             : LoadObject<UClass>(nullptr, *Request.ParentClassPath))
                         : LoadObject<UClass>(nullptr, *Operation.ClassPath);
-                    if (Operation.FunctionName.IsEmpty() || !OwnerClass
-                        || !OwnerClass->FindFunctionByName(FName(*Operation.FunctionName)))
+                    UFunction* Function = OwnerClass
+                        ? OwnerClass->FindFunctionByName(FName(*Operation.FunctionName))
+                        : nullptr;
+                    if (Operation.FunctionName.IsEmpty() || !Function)
                     {
                         return MakeError<FThomasBlueprintPlanResult>(
                             TEXT("function_not_found"), Operation.FunctionName);
                     }
+                    if (!IsAllowedBlueprintFunction(Existing, OwnerClass, Function))
+                    {
+                        return MakeError<FThomasBlueprintPlanResult>(
+                            TEXT("function_not_allowed"),
+                            Operation.ClassPath + TEXT("::") + Operation.FunctionName);
+                    }
+                    const bool bRequiresConfirmation = !Operation.ClassPath.IsEmpty()
+                        || IsConstructionScriptGraph(Operation.GraphName);
+                    if (bRequiresConfirmation && !Request.bConfirmDestructive)
+                    {
+                        return MakeError<FThomasBlueprintPlanResult>(
+                            TEXT("confirmation_required"),
+                            TEXT("External calls and Construction Script calls require bConfirmDestructive=true."));
+                    }
+                    bHasDestructiveOperation |= bRequiresConfirmation;
                 }
                 KnownHandles.Add(Operation.Handle);
             }

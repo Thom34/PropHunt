@@ -5,6 +5,7 @@ public class ThomasEditor : ModuleRules
     public ThomasEditor(ReadOnlyTargetRules Target) : base(Target)
     {
         PCHUsage = PCHUsageMode.UseExplicitOrSharedPCHs;
+        bUseUnity = false;
 
         PublicDependencyModuleNames.AddRange(new[]
         {

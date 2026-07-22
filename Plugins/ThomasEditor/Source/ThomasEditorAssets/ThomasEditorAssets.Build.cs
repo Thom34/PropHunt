@@ -1,8 +1,8 @@
 using UnrealBuildTool;
 
-public class ThomasEditor : ModuleRules
+public class ThomasEditorAssets : ModuleRules
 {
-    public ThomasEditor(ReadOnlyTargetRules Target) : base(Target)
+    public ThomasEditorAssets(ReadOnlyTargetRules Target) : base(Target)
     {
         PCHUsage = PCHUsageMode.UseExplicitOrSharedPCHs;
 
@@ -10,17 +10,13 @@ public class ThomasEditor : ModuleRules
         {
             "Core",
             "CoreUObject",
-            "Engine"
+            "Engine",
+            "ThomasEditorCore"
         });
 
         PrivateDependencyModuleNames.AddRange(new[]
         {
             "AssetRegistry",
-            "BlueprintEditorLibrary",
-            "Json",
-            "Kismet",
-            "PropHunt",
-            "ThomasEditorCore",
             "UnrealEd"
         });
     }

@@ -1,9 +1,9 @@
 {
   "FileVersion": 3,
-  "Version": 1,
-  "VersionName": "0.1.0",
+    "Version": 4,
+    "VersionName": "0.4.0",
   "FriendlyName": "ThomasEditor",
-  "Description": "Project-local, editor-only MCP bridge for compact Blueprint inspection and configuration.",
+  "Description": "Project-local, editor-only UE 5.8 native MCP toolsets with lazy domain providers.",
   "Category": "Editor",
   "CreatedBy": "Thomas",
   "EngineVersion": "5.8.0",
@@ -14,12 +14,163 @@
     {
       "Name": "ThomasEditor",
       "Type": "Editor",
-      "LoadingPhase": "Default"
+      "LoadingPhase": "None",
+      "TargetAllowList": ["Editor"]
+    },
+    {
+      "Name": "ThomasEditorCore",
+      "Type": "Editor",
+      "LoadingPhase": "PostEngineInit",
+      "TargetAllowList": ["Editor"]
+    },
+    {
+      "Name": "ThomasEditorAssets",
+      "Type": "Editor",
+      "LoadingPhase": "None",
+      "TargetAllowList": ["Editor"]
+    },
+    {
+      "Name": "ThomasEditorBlueprint",
+      "Type": "Editor",
+      "LoadingPhase": "None",
+      "TargetAllowList": ["Editor"]
+    },
+    {
+      "Name": "ThomasEditorWorld",
+      "Type": "Editor",
+      "LoadingPhase": "None",
+      "TargetAllowList": ["Editor"]
+    },
+    {
+      "Name": "ThomasEditorRender",
+      "Type": "Editor",
+      "LoadingPhase": "None",
+      "TargetAllowList": ["Editor"]
+    },
+    {
+      "Name": "ThomasEditorMaterials",
+      "Type": "Editor",
+      "LoadingPhase": "None",
+      "TargetAllowList": ["Editor"]
+    },
+    {
+      "Name": "ThomasEditorAnimation",
+      "Type": "Editor",
+      "LoadingPhase": "None",
+      "TargetAllowList": ["Editor"]
+    },
+    {
+      "Name": "ThomasEditorCinematics",
+      "Type": "Editor",
+      "LoadingPhase": "None",
+      "TargetAllowList": ["Editor"]
+    },
+    {
+      "Name": "ThomasEditorPaper2D",
+      "Type": "Editor",
+      "LoadingPhase": "None",
+      "TargetAllowList": ["Editor"]
+    },
+    {
+      "Name": "ThomasEditorGameplayData",
+      "Type": "Editor",
+      "LoadingPhase": "None",
+      "TargetAllowList": ["Editor"]
+    },
+    {
+      "Name": "ThomasEditorDataAI",
+      "Type": "Editor",
+      "LoadingPhase": "None",
+      "TargetAllowList": ["Editor"]
+    },
+    {
+      "Name": "ThomasEditorFX",
+      "Type": "Editor",
+      "LoadingPhase": "None",
+      "TargetAllowList": ["Editor"]
+    },
+    {
+      "Name": "ThomasEditorAudio",
+      "Type": "Editor",
+      "LoadingPhase": "None",
+      "TargetAllowList": ["Editor"]
+    },
+    {
+      "Name": "ThomasEditorValidation",
+      "Type": "Editor",
+      "LoadingPhase": "None",
+      "TargetAllowList": ["Editor"]
+    },
+    {
+      "Name": "ThomasEditorPCG",
+      "Type": "Editor",
+      "LoadingPhase": "None",
+      "TargetAllowList": ["Editor"]
     }
   ],
   "Plugins": [
     {
-      "Name": "RemoteControl",
+      "Name": "ModelContextProtocol",
+      "Enabled": true,
+      "TargetAllowList": ["Editor"]
+    },
+    {
+      "Name": "ToolsetRegistry",
+      "Enabled": true,
+      "TargetAllowList": ["Editor"]
+    },
+    {
+      "Name": "DataValidation",
+      "Enabled": true,
+      "TargetAllowList": ["Editor"]
+    },
+    {
+      "Name": "EnhancedInput",
+      "Enabled": true,
+      "TargetAllowList": ["Editor"]
+    },
+    {
+      "Name": "Paper2D",
+      "Enabled": true,
+      "TargetAllowList": ["Editor"]
+    },
+    {
+      "Name": "Niagara",
+      "Enabled": true,
+      "TargetAllowList": ["Editor"]
+    },
+    {
+      "Name": "Metasound",
+      "Enabled": true,
+      "TargetAllowList": ["Editor"]
+    },
+    {
+      "Name": "StateTree",
+      "Enabled": true,
+      "TargetAllowList": ["Editor"]
+    },
+    {
+      "Name": "GameplayStateTree",
+      "Enabled": true,
+      "TargetAllowList": ["Editor"]
+    },
+    {
+      "Name": "EnvironmentQueryEditor",
+      "Enabled": true,
+      "TargetAllowList": ["Editor"]
+    },
+    {
+      "Name": "PCG",
+      "Enabled": true,
+      "TargetAllowList": ["Editor"]
+    },
+    {
+      "Name": "IKRig",
+      "Enabled": true,
+      "TargetAllowList": ["Editor"]
+    },
+    {
+      "Name": "ControlRig",
       "Enabled": true,
       "TargetAllowList": ["Editor"]
     }

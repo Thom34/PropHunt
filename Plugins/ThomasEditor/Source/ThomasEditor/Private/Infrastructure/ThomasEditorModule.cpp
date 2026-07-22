@@ -1,210 +1,89 @@
 #include "Infrastructure/ThomasEditorModule.h"
 
-#include "Algo/Reverse.h"
-#include "Dom/JsonObject.h"
-#include "HAL/FileManager.h"
-#include "Misc/FileHelper.h"
-#include "Misc/Paths.h"
-#include "Misc/ScopeLock.h"
-#include "RCAllowedRemoteFunctionCall.h"
-#include "RemoteControlSettings.h"
-#include "Serialization/JsonSerializer.h"
-#include "Serialization/JsonWriter.h"
+#include "Asset/ThomasEditorAssetService.h"
+#include "Blueprint/ThomasEditorBlueprintService.h"
+#include "Level/ThomasEditorLevelService.h"
+#if WITH_DEV_AUTOMATION_TESTS
+#include "Tests/ThomasEditorV02ParityTests.h"
+#endif
 
 IMPLEMENT_MODULE(FThomasEditorModule, ThomasEditor)
 
-namespace
-{
-FString CompactModuleJson(const TSharedRef<FJsonObject>& Object)
-{
-    FString Output;
-    const auto Writer = TJsonWriterFactory<TCHAR, TCondensedJsonPrintPolicy<TCHAR>>::Create(&Output);
-    FJsonSerializer::Serialize(Object, Writer);
-    return Output;
-}
-
-const FSoftClassPath BridgeClassPath(TEXT("/Script/ThomasEditor.ThomasEditorBridge"));
-}
-
 void FThomasEditorModule::StartupModule()
 {
-    CreateSessionToken();
-    ConfigureRemoteSecurity();
-    RegisterRemoteFunctions();
-    if (GLog)
-    {
-        GLog->AddOutputDevice(this);
-    }
 }
 
 void FThomasEditorModule::ShutdownModule()
 {
-    if (GLog)
-    {
-        GLog->RemoveOutputDevice(this);
-    }
-    UnregisterRemoteFunctions();
-    RestoreRemoteSecurity();
-    DeleteSessionToken();
 }
 
-void FThomasEditorModule::Serialize(const TCHAR* Message, ELogVerbosity::Type Verbosity, const FName& Category)
+FString FThomasEditorModule::GetEditorStatusJson() const
 {
-    if (!Message || Verbosity > ELogVerbosity::Warning)
-    {
-        return;
-    }
-
-    FBufferedMessage Entry;
-    Entry.Level = Verbosity <= ELogVerbosity::Error ? TEXT("error") : TEXT("warning");
-    Entry.Category = Category.ToString();
-    Entry.Text = FString(Message).Left(1200);
-
-    FScopeLock Lock(&MessageMutex);
-    Messages.Add(MoveTemp(Entry));
-    if (Messages.Num() > 200)
-    {
-        Messages.RemoveAt(0, Messages.Num() - 200, EAllowShrinking::No);
-    }
+    return FThomasEditorBlueprintService::BuildStatusJson();
 }
 
-FThomasEditorModule& FThomasEditorModule::Get()
+FString FThomasEditorModule::GetBlueprintSummaryJson(
+    const FString& BlueprintPath,
+    const FString& PropertyNamesJson,
+    const bool bIncludeComponents) const
 {
-    return FModuleManager::LoadModuleChecked<FThomasEditorModule>(TEXT("ThomasEditor"));
+    return FThomasEditorBlueprintService::BuildSummaryJson(
+        BlueprintPath, PropertyNamesJson, bIncludeComponents);
 }
 
-bool FThomasEditorModule::IsAuthorized(const FString& Token) const
+FString FThomasEditorModule::ApplyBlueprintPatchJson(
+    const FString& BlueprintPath,
+    const FString& NewParentClass,
+    const FString& ClassReferencesJson,
+    const bool bAllowDestructiveReparent,
+    const bool bCompileAndSave) const
 {
-    return !SessionToken.IsEmpty() && Token == SessionToken;
+    return FThomasEditorBlueprintService::ApplyPatchJson(
+        BlueprintPath,
+        NewParentClass,
+        ClassReferencesJson,
+        bAllowDestructiveReparent,
+        bCompileAndSave);
 }
 
-FString FThomasEditorModule::GetRecentMessagesJson(int32 Limit, const FString& Filter) const
+FString FThomasEditorModule::GetDataAssetSummaryJson(
+    const FString& AssetPath,
+    const FString& PropertyNamesJson) const
 {
-    TArray<TSharedPtr<FJsonValue>> Items;
-    const int32 SafeLimit = FMath::Clamp(Limit, 1, 50);
-
-    FScopeLock Lock(&MessageMutex);
-    for (int32 Index = Messages.Num() - 1; Index >= 0 && Items.Num() < SafeLimit; --Index)
-    {
-        const FBufferedMessage& Entry = Messages[Index];
-        if (!Filter.IsEmpty()
-            && !Entry.Category.Contains(Filter, ESearchCase::IgnoreCase)
-            && !Entry.Text.Contains(Filter, ESearchCase::IgnoreCase))
-        {
-            continue;
-        }
-
-        TSharedRef<FJsonObject> Item = MakeShared<FJsonObject>();
-        Item->SetStringField(TEXT("level"), Entry.Level);
-        Item->SetStringField(TEXT("category"), Entry.Category);
-        Item->SetStringField(TEXT("message"), Entry.Text);
-        Items.Add(MakeShared<FJsonValueObject>(Item));
-    }
-    Algo::Reverse(Items);
-
-    TSharedRef<FJsonObject> Result = MakeShared<FJsonObject>();
-    Result->SetBoolField(TEXT("ok"), true);
-    Result->SetNumberField(TEXT("count"), Items.Num());
-    Result->SetArrayField(TEXT("items"), Items);
-    return CompactModuleJson(Result);
+    return FThomasEditorAssetService::BuildSummaryJson(
+        AssetPath, PropertyNamesJson);
 }
 
-void FThomasEditorModule::RegisterRemoteFunctions()
+FString FThomasEditorModule::ApplyDataAssetPatchJson(
+    const FString& AssetPath,
+    const FString& ChangesJson,
+    const bool bAllowDirty,
+    const bool bSave) const
 {
-    URemoteControlSettings* Settings = GetMutableDefault<URemoteControlSettings>();
-    const TCHAR* FunctionNames[] = { TEXT("EditorStatus"), TEXT("BlueprintSummary"), TEXT("BlueprintPatch"), TEXT("RecentMessages") };
-    for (const TCHAR* FunctionName : FunctionNames)
-    {
-        FRCAllowedRemoteFunctionCall Entry;
-        Entry.ClassPath = BridgeClassPath;
-        Entry.FunctionName = FunctionName;
-        Entry.bAllowChildClasses = false;
-        const bool bAlreadyRegistered = Settings->CustomAllowedRemoteFunctionCalls.ContainsByPredicate(
-            [&Entry](const FRCAllowedRemoteFunctionCall& Existing)
-            {
-                return Existing.ClassPath == Entry.ClassPath
-                    && Existing.FunctionName.IsSet()
-                    && Entry.FunctionName.IsSet()
-                    && Existing.FunctionName.GetValue().Equals(Entry.FunctionName.GetValue(), ESearchCase::IgnoreCase)
-                    && !Existing.bAllowChildClasses;
-            });
-        if (!bAlreadyRegistered)
-        {
-            Settings->CustomAllowedRemoteFunctionCalls.Add(MoveTemp(Entry));
-        }
-    }
+    return FThomasEditorAssetService::ApplyPatchJson(
+        AssetPath, ChangesJson, bAllowDirty, bSave);
 }
 
-void FThomasEditorModule::UnregisterRemoteFunctions()
+FString FThomasEditorModule::GetLevelAuditJson(
+    const FString& MapPath,
+    const FString& ClassFiltersJson,
+    const FString& FoldersJson,
+    const FString& RequiredFlagsJson,
+    const bool bIncludeActors,
+    const int32 MaxResults) const
 {
-    if (!UObjectInitialized())
-    {
-        return;
-    }
-    GetMutableDefault<URemoteControlSettings>()->CustomAllowedRemoteFunctionCalls.RemoveAll(
-        [](const FRCAllowedRemoteFunctionCall& Entry) { return Entry.ClassPath == BridgeClassPath; });
+    return FThomasEditorLevelService::BuildAuditJson(
+        MapPath,
+        ClassFiltersJson,
+        FoldersJson,
+        RequiredFlagsJson,
+        bIncludeActors,
+        MaxResults);
 }
 
-void FThomasEditorModule::ConfigureRemoteSecurity()
+#if WITH_DEV_AUTOMATION_TESTS
+bool FThomasEditorModule::RunLegacyMutationGateAutomation() const
 {
-    URemoteControlSettings* Settings = GetMutableDefault<URemoteControlSettings>();
-    FRemoteSecuritySnapshot Snapshot;
-    Snapshot.bAllowAnyRemoteFunctionCall = Settings->bAllowAnyRemoteFunctionCall;
-    Snapshot.bRestrictServerAccess = Settings->bRestrictServerAccess;
-    Snapshot.bEnableRemotePythonExecution = Settings->bEnableRemotePythonExecution;
-    Snapshot.bAllowConsoleCommandRemoteExecution = Settings->bAllowConsoleCommandRemoteExecution;
-    Snapshot.bEnforcePassphraseForRemoteClients = Settings->bEnforcePassphraseForRemoteClients;
-    Snapshot.AllowedOrigin = Settings->AllowedOrigin;
-    Snapshot.AllowlistedClients = Settings->AllowlistedClients;
-    RemoteSecuritySnapshot = MoveTemp(Snapshot);
-
-    Settings->bAllowAnyRemoteFunctionCall = false;
-    Settings->bRestrictServerAccess = true;
-    Settings->bEnableRemotePythonExecution = false;
-    Settings->bAllowConsoleCommandRemoteExecution = false;
-    Settings->bEnforcePassphraseForRemoteClients = true;
-    Settings->AllowedOrigin = TEXT("http://127.0.0.1");
-    Settings->AllowlistedClients.Reset();
-    Settings->AllowClient(TEXT("127.0.0.1"));
+    return RunThomasEditorV02MutationGates();
 }
-
-void FThomasEditorModule::RestoreRemoteSecurity()
-{
-    if (!UObjectInitialized() || !RemoteSecuritySnapshot.IsSet())
-    {
-        return;
-    }
-
-    URemoteControlSettings* Settings = GetMutableDefault<URemoteControlSettings>();
-    const FRemoteSecuritySnapshot& Snapshot = RemoteSecuritySnapshot.GetValue();
-    Settings->bAllowAnyRemoteFunctionCall = Snapshot.bAllowAnyRemoteFunctionCall;
-    Settings->bRestrictServerAccess = Snapshot.bRestrictServerAccess;
-    Settings->bEnableRemotePythonExecution = Snapshot.bEnableRemotePythonExecution;
-    Settings->bAllowConsoleCommandRemoteExecution = Snapshot.bAllowConsoleCommandRemoteExecution;
-    Settings->bEnforcePassphraseForRemoteClients = Snapshot.bEnforcePassphraseForRemoteClients;
-    Settings->AllowedOrigin = Snapshot.AllowedOrigin;
-    Settings->AllowlistedClients = Snapshot.AllowlistedClients;
-    RemoteSecuritySnapshot.Reset();
-}
-
-void FThomasEditorModule::CreateSessionToken()
-{
-    SessionToken = FGuid::NewGuid().ToString(EGuidFormats::Digits);
-    const FString SessionDirectory = FPaths::Combine(FPaths::ProjectSavedDir(), TEXT("ThomasEditor"));
-    IFileManager::Get().MakeDirectory(*SessionDirectory, true);
-    SessionTokenPath = FPaths::Combine(SessionDirectory, TEXT("session.token"));
-    if (!FFileHelper::SaveStringToFile(SessionToken, *SessionTokenPath, FFileHelper::EEncodingOptions::ForceUTF8WithoutBOM))
-    {
-        SessionToken.Reset();
-        UE_LOG(LogTemp, Error, TEXT("ThomasEditor could not create its session token."));
-    }
-}
-
-void FThomasEditorModule::DeleteSessionToken()
-{
-    if (!SessionTokenPath.IsEmpty())
-    {
-        IFileManager::Get().Delete(*SessionTokenPath, false, true);
-    }
-    SessionToken.Reset();
-}
+#endif

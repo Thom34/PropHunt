@@ -1,42 +1,44 @@
 #pragma once
 
-#include "ThomasEditorLegacyProvider.h"
+#include "Modules/ModuleInterface.h"
 
-/** Project-specific service provider. Loaded only when a compatibility tool is called. */
-class FThomasEditorModule final : public IThomasEditorLegacyProviderModule
+class THOMASEDITORCORE_API IThomasEditorLegacyProviderModule : public IModuleInterface
 {
 public:
-    virtual void StartupModule() override;
-    virtual void ShutdownModule() override;
+    virtual FString GetEditorStatusJson() const = 0;
 
-    virtual FString GetEditorStatusJson() const override;
     virtual FString GetBlueprintSummaryJson(
         const FString& BlueprintPath,
         const FString& PropertyNamesJson,
-        bool bIncludeComponents) const override;
+        bool bIncludeComponents) const = 0;
+
     virtual FString ApplyBlueprintPatchJson(
         const FString& BlueprintPath,
         const FString& NewParentClass,
         const FString& ClassReferencesJson,
         bool bAllowDestructiveReparent,
-        bool bCompileAndSave) const override;
+        bool bCompileAndSave) const = 0;
+
     virtual FString GetDataAssetSummaryJson(
         const FString& AssetPath,
-        const FString& PropertyNamesJson) const override;
+        const FString& PropertyNamesJson) const = 0;
+
     virtual FString ApplyDataAssetPatchJson(
         const FString& AssetPath,
         const FString& ChangesJson,
         bool bAllowDirty,
-        bool bSave) const override;
+        bool bSave) const = 0;
+
     virtual FString GetLevelAuditJson(
         const FString& MapPath,
         const FString& ClassFiltersJson,
         const FString& FoldersJson,
         const FString& RequiredFlagsJson,
         bool bIncludeActors,
-        int32 MaxResults) const override;
+        int32 MaxResults) const = 0;
 
 #if WITH_DEV_AUTOMATION_TESTS
-    virtual bool RunLegacyMutationGateAutomation() const override;
+    /** Execute the provider's destructive rollback/save gates from the eager Core test module. */
+    virtual bool RunLegacyMutationGateAutomation() const = 0;
 #endif
 };

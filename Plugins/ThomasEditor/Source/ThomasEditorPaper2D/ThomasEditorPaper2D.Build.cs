@@ -1,26 +1,22 @@
 using UnrealBuildTool;
 
-public class ThomasEditor : ModuleRules
+public class ThomasEditorPaper2D : ModuleRules
 {
-    public ThomasEditor(ReadOnlyTargetRules Target) : base(Target)
+    public ThomasEditorPaper2D(ReadOnlyTargetRules Target) : base(Target)
     {
         PCHUsage = PCHUsageMode.UseExplicitOrSharedPCHs;
-
         PublicDependencyModuleNames.AddRange(new[]
         {
             "Core",
             "CoreUObject",
-            "Engine"
+            "Engine",
+            "Paper2D",
+            "ThomasEditorCore"
         });
-
         PrivateDependencyModuleNames.AddRange(new[]
         {
             "AssetRegistry",
-            "BlueprintEditorLibrary",
-            "Json",
-            "Kismet",
-            "PropHunt",
-            "ThomasEditorCore",
+            "Paper2DEditor",
             "UnrealEd"
         });
     }

@@ -1,26 +1,23 @@
 using UnrealBuildTool;
 
-public class ThomasEditor : ModuleRules
+public class ThomasEditorAudio : ModuleRules
 {
-    public ThomasEditor(ReadOnlyTargetRules Target) : base(Target)
+    public ThomasEditorAudio(ReadOnlyTargetRules Target) : base(Target)
     {
         PCHUsage = PCHUsageMode.UseExplicitOrSharedPCHs;
-
         PublicDependencyModuleNames.AddRange(new[]
         {
             "Core",
             "CoreUObject",
-            "Engine"
+            "Engine",
+            "MetasoundEngine",
+            "MetasoundFrontend",
+            "ThomasEditorCore"
         });
-
         PrivateDependencyModuleNames.AddRange(new[]
         {
             "AssetRegistry",
-            "BlueprintEditorLibrary",
-            "Json",
-            "Kismet",
-            "PropHunt",
-            "ThomasEditorCore",
+            "MetasoundEditor",
             "UnrealEd"
         });
     }

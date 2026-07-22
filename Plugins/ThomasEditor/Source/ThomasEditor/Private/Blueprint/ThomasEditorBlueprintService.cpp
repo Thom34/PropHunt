@@ -2,6 +2,7 @@
 
 #include "Animation/Skeleton.h"
 #include "AssetRegistry/AssetRegistryModule.h"
+#include "HAL/FileManager.h"
 #include "BlueprintEditorLibrary.h"
 #include "Components/ActorComponent.h"
 #include "Dom/JsonObject.h"
@@ -126,6 +127,21 @@ bool SaveAsset(UObject* Asset)
     Args.Error = GError;
     return UPackage::SavePackage(Package, Asset, *Filename, Args);
 }
+
+FString RollbackError(
+    const FString& Code,
+    const FString& Message,
+    const bool bRollbackCompiled,
+    const bool bRollbackSaved)
+{
+    TSharedRef<FJsonObject> Result = MakeShared<FJsonObject>();
+    Result->SetBoolField(TEXT("ok"), false);
+    Result->SetStringField(TEXT("code"), Code);
+    Result->SetStringField(TEXT("message"), Message);
+    Result->SetBoolField(TEXT("rollback_compiled"), bRollbackCompiled);
+    Result->SetBoolField(TEXT("rollback_saved"), bRollbackSaved);
+    return CompactJson(Result);
+}
 }
 
 FString FThomasEditorBlueprintService::Error(const FString& Code, const FString& Message)
@@ -142,7 +158,8 @@ FString FThomasEditorBlueprintService::BuildStatusJson()
     TSharedRef<FJsonObject> Result = MakeShared<FJsonObject>();
     Result->SetBoolField(TEXT("ok"), true);
     Result->SetStringField(TEXT("plugin"), TEXT("ThomasEditor"));
-    Result->SetStringField(TEXT("version"), TEXT("0.1.0"));
+    Result->SetStringField(TEXT("version"), TEXT("0.4.0"));
+    Result->SetStringField(TEXT("transport"), TEXT("ue58_native_mcp"));
     Result->SetStringField(TEXT("project"), FApp::GetProjectName());
     Result->SetStringField(TEXT("engine"), FEngineVersion::Current().ToString());
     Result->SetBoolField(TEXT("pie"), GEditor && GEditor->PlayWorld != nullptr);
@@ -291,8 +308,13 @@ FString FThomasEditorBlueprintService::ApplyPatchJson(
     TArray<TSharedPtr<FJsonValue>> Changes;
     TMap<FString, UClass*> PreviousReferenceValues;
 
-    auto Rollback = [&]()
+    auto Rollback = [&]() -> TPair<bool, bool>
     {
+        if (PreviousParentClass && Blueprint->ParentClass != PreviousParentClass)
+        {
+            UBlueprintEditorLibrary::ReparentBlueprint(Blueprint, PreviousParentClass);
+        }
+        bool bRollbackCompiled = Compile(Blueprint);
         if (Blueprint->GeneratedClass)
         {
             UObject* Defaults = Blueprint->GeneratedClass->GetDefaultObject();
@@ -303,21 +325,19 @@ FString FThomasEditorBlueprintService::ApplyPatchJson(
                     Property->SetPropertyValue_InContainer(Defaults, Pair.Value);
                 }
             }
+            bRollbackCompiled = Compile(Blueprint) && bRollbackCompiled;
         }
-        if (PreviousParentClass && Blueprint->ParentClass != PreviousParentClass)
-        {
-            UBlueprintEditorLibrary::ReparentBlueprint(Blueprint, PreviousParentClass);
-        }
-        Compile(Blueprint);
+        bool bRollbackSaved = true;
         if (bCompileAndSave)
         {
-            Save(Blueprint);
+            bRollbackSaved = bRollbackCompiled && Save(Blueprint);
         }
         else
         {
             Blueprint->GetOutermost()->SetDirtyFlag(false);
         }
         Transaction.Cancel();
+        return TPair<bool, bool>(bRollbackCompiled, bRollbackSaved);
     };
 
     if (bRequestsParentChange)
@@ -325,8 +345,8 @@ FString FThomasEditorBlueprintService::ApplyPatchJson(
         UBlueprintEditorLibrary::ReparentBlueprint(Blueprint, Parent);
         if (Blueprint->Status == BS_Error)
         {
-            Rollback();
-            return Error(TEXT("compile_failed_after_reparent"), TEXT("Blueprint compilation failed."));
+            const TPair<bool, bool> RollbackResult = Rollback();
+            return RollbackError(TEXT("compile_failed_after_reparent"), TEXT("Blueprint compilation failed; rollback status is explicit."), RollbackResult.Key, RollbackResult.Value);
         }
         Changes.Add(MakeShared<FJsonValueString>(TEXT("parent")));
     }
@@ -336,8 +356,8 @@ FString FThomasEditorBlueprintService::ApplyPatchJson(
         UObject* Defaults = Blueprint->GeneratedClass ? Blueprint->GeneratedClass->GetDefaultObject() : nullptr;
         if (!Defaults)
         {
-            Rollback();
-            return Error(TEXT("missing_generated_class"), BlueprintPath);
+            const TPair<bool, bool> RollbackResult = Rollback();
+            return RollbackError(TEXT("missing_generated_class"), BlueprintPath, RollbackResult.Key, RollbackResult.Value);
         }
         Defaults->Modify();
 
@@ -346,8 +366,8 @@ FString FThomasEditorBlueprintService::ApplyPatchJson(
             FClassProperty* Property = FindFProperty<FClassProperty>(Blueprint->GeneratedClass, *Pair.Key);
             if (!Property || (Property->MetaClass && !Pair.Value->IsChildOf(Property->MetaClass)))
             {
-                Rollback();
-                return Error(TEXT("invalid_class_property"), Pair.Key);
+                const TPair<bool, bool> RollbackResult = Rollback();
+                return RollbackError(TEXT("invalid_class_property"), Pair.Key, RollbackResult.Key, RollbackResult.Value);
             }
             PreviousReferenceValues.Add(Pair.Key, Cast<UClass>(Property->GetObjectPropertyValue_InContainer(Defaults)));
         }
@@ -363,8 +383,8 @@ FString FThomasEditorBlueprintService::ApplyPatchJson(
 
     if (ResolvedReferences.Num() > 0 && !Compile(Blueprint))
     {
-        Rollback();
-        return Error(TEXT("compile_failed"), TEXT("Changes were rolled back; inspect RecentMessages for details."));
+        const TPair<bool, bool> RollbackResult = Rollback();
+        return RollbackError(TEXT("compile_failed"), TEXT("Compilation failed; inspect RecentMessages and rollback status."), RollbackResult.Key, RollbackResult.Value);
     }
 
     bool bSaved = false;
@@ -373,8 +393,8 @@ FString FThomasEditorBlueprintService::ApplyPatchJson(
         bSaved = Save(Blueprint);
         if (!bSaved)
         {
-            Rollback();
-            return Error(TEXT("save_failed"), TEXT("Changes were rolled back; inspect RecentMessages for details."));
+            const TPair<bool, bool> RollbackResult = Rollback();
+            return RollbackError(TEXT("save_failed"), TEXT("Save failed; inspect RecentMessages and rollback status."), RollbackResult.Key, RollbackResult.Value);
         }
     }
     TSharedRef<FJsonObject> Result = MakeShared<FJsonObject>();
@@ -392,23 +412,27 @@ FString FThomasEditorBlueprintService::CreatePrototypeSkeletonJson(
     const FString& SkeletonPath)
 {
     const FString MeshObjectPath = ObjectPath(SkeletalMeshPath, false);
-    const FString SkeletonPackagePath = SkeletonPath.TrimStartAndEnd();
-    const FString ExpectedPrefix = TEXT("/Game/PropHunt/Characters/");
-    const bool bAllowedPrototypeFolder =
-        MeshObjectPath.Contains(TEXT("/Prototype/Mixamo/"))
-        || MeshObjectPath.Contains(TEXT("/Prototype/PropnightReference/"));
-    const bool bAllowedSkeletonFolder =
-        SkeletonPackagePath.Contains(TEXT("/Prototype/Mixamo/"))
-        || SkeletonPackagePath.Contains(TEXT("/Prototype/PropnightReference/"));
-    if (!MeshObjectPath.StartsWith(ExpectedPrefix)
-        || !bAllowedPrototypeFolder
-        || !SkeletonPackagePath.StartsWith(ExpectedPrefix)
-        || !bAllowedSkeletonFolder
+    FString SkeletonPackagePath = SkeletonPath.TrimStartAndEnd();
+    FString UnusedObjectName;
+    SkeletonPackagePath.Split(TEXT("."), &SkeletonPackagePath, &UnusedObjectName);
+    const TCHAR* AllowedRoots[] = {
+        TEXT("/Game/PropHunt/Characters/Hunter/Prototype/Mixamo/"),
+        TEXT("/Game/PropHunt/Characters/Survivor/Prototype/Mixamo/"),
+        TEXT("/Game/PropHunt/Characters/Hunter/Prototype/PropnightReference/"),
+        TEXT("/Game/PropHunt/Characters/Survivor/Prototype/PropnightReference/") };
+    int32 MeshRoot = INDEX_NONE;
+    int32 SkeletonRoot = INDEX_NONE;
+    for (int32 Index = 0; Index < UE_ARRAY_COUNT(AllowedRoots); ++Index)
+    {
+        MeshRoot = MeshObjectPath.StartsWith(AllowedRoots[Index]) ? Index : MeshRoot;
+        SkeletonRoot = SkeletonPackagePath.StartsWith(AllowedRoots[Index]) ? Index : SkeletonRoot;
+    }
+    if (MeshRoot == INDEX_NONE || SkeletonRoot == INDEX_NONE || MeshRoot != SkeletonRoot
         || !FPackageName::IsValidLongPackageName(SkeletonPackagePath))
     {
         return Error(
             TEXT("prototype_path_required"),
-            TEXT("Mesh and Skeleton must use an approved PropHunt Characters prototype path."));
+            TEXT("Mesh and Skeleton must use the same approved Hunter or Survivor prototype root."));
     }
 
     USkeletalMesh* Mesh = LoadObject<USkeletalMesh>(nullptr, *MeshObjectPath);
@@ -425,13 +449,26 @@ FString FThomasEditorBlueprintService::CreatePrototypeSkeletonJson(
                 ExistingSkeleton->GetPathName());
         }
 
+        FScopedTransaction Transaction(NSLOCTEXT("ThomasEditor", "PersistPrototypeSkeleton", "Persist Prototype Skeleton"));
+        ExistingSkeleton->Modify();
+        Mesh->Modify();
+        const EObjectFlags PreviousFlags = ExistingSkeleton->GetFlags();
+        const bool bSkeletonWasDirty = ExistingSkeleton->GetOutermost()->IsDirty();
+        const bool bMeshWasDirty = Mesh->GetOutermost()->IsDirty();
         ExistingSkeleton->SetFlags(RF_Public | RF_Standalone | RF_Transactional);
         ExistingSkeleton->MarkPackageDirty();
         Mesh->MarkPackageDirty();
-        FAssetRegistryModule::AssetCreated(ExistingSkeleton);
-        if (!SaveAsset(ExistingSkeleton) || !SaveAsset(Mesh))
+        const bool bSkeletonSaved = SaveAsset(ExistingSkeleton);
+        const bool bMeshSaved = bSkeletonSaved && SaveAsset(Mesh);
+        if (!bSkeletonSaved || !bMeshSaved)
         {
-            return Error(TEXT("skeleton_save_failed"), SkeletonPackagePath);
+            ExistingSkeleton->ClearFlags(RF_Public | RF_Standalone | RF_Transactional);
+            ExistingSkeleton->SetFlags(PreviousFlags & (RF_Public | RF_Standalone | RF_Transactional));
+            ExistingSkeleton->GetOutermost()->SetDirtyFlag(bSkeletonWasDirty);
+            Mesh->GetOutermost()->SetDirtyFlag(bMeshWasDirty);
+            const bool bRollbackSaved = !bSkeletonSaved || SaveAsset(ExistingSkeleton);
+            Transaction.Cancel();
+            return RollbackError(TEXT("skeleton_save_failed"), SkeletonPackagePath, true, bRollbackSaved);
         }
 
         TSharedRef<FJsonObject> ExistingResult = MakeShared<FJsonObject>();
@@ -444,13 +481,19 @@ FString FThomasEditorBlueprintService::CreatePrototypeSkeletonJson(
     if (USkeleton* ExistingAsset = LoadObject<USkeleton>(
         nullptr, *ObjectPath(SkeletonPackagePath, false)))
     {
+        FScopedTransaction Transaction(NSLOCTEXT("ThomasEditor", "AssignPrototypeSkeleton", "Assign Prototype Skeleton"));
+        const bool bMeshWasDirty = Mesh->GetOutermost()->IsDirty();
         Mesh->Modify();
         Mesh->SetSkeleton(ExistingAsset);
         Mesh->MarkPackageDirty();
         if (!SaveAsset(Mesh))
         {
             Mesh->SetSkeleton(nullptr);
-            return Error(TEXT("mesh_skeleton_assignment_save_failed"), SkeletonPackagePath);
+            Mesh->MarkPackageDirty();
+            const bool bRollbackSaved = SaveAsset(Mesh);
+            Mesh->GetOutermost()->SetDirtyFlag(bMeshWasDirty);
+            Transaction.Cancel();
+            return RollbackError(TEXT("mesh_skeleton_assignment_save_failed"), SkeletonPackagePath, true, bRollbackSaved);
         }
 
         TSharedRef<FJsonObject> AssignedResult = MakeShared<FJsonObject>();
@@ -481,16 +524,33 @@ FString FThomasEditorBlueprintService::CreatePrototypeSkeletonJson(
         return Error(TEXT("skeleton_bone_merge_failed"), SkeletalMeshPath);
     }
 
+    FScopedTransaction Transaction(NSLOCTEXT("ThomasEditor", "CreatePrototypeSkeleton", "Create Prototype Skeleton"));
+    const bool bMeshWasDirty = Mesh->GetOutermost()->IsDirty();
     Mesh->Modify();
     Mesh->SetSkeleton(Skeleton);
     Mesh->MarkPackageDirty();
     Skeleton->MarkPackageDirty();
     FAssetRegistryModule::AssetCreated(Skeleton);
 
-    if (!SaveAsset(Skeleton) || !SaveAsset(Mesh))
+    const bool bSkeletonSaved = SaveAsset(Skeleton);
+    const bool bMeshSaved = bSkeletonSaved && SaveAsset(Mesh);
+    if (!bSkeletonSaved || !bMeshSaved)
     {
         Mesh->SetSkeleton(nullptr);
-        return Error(TEXT("skeleton_save_failed"), SkeletonPackagePath);
+        Mesh->MarkPackageDirty();
+        const bool bMeshRollbackSaved = SaveAsset(Mesh);
+        Mesh->GetOutermost()->SetDirtyFlag(bMeshWasDirty);
+        const FString SkeletonFilename = FPackageName::LongPackageNameToFilename(
+            SkeletonPackagePath, FPackageName::GetAssetPackageExtension());
+        FAssetRegistryModule::AssetDeleted(Skeleton);
+        Skeleton->ClearFlags(RF_Public | RF_Standalone);
+        Skeleton->MarkAsGarbage();
+        SkeletonPackage->SetDirtyFlag(false);
+        const bool bSkeletonRemoved = !IFileManager::Get().FileExists(*SkeletonFilename)
+            || IFileManager::Get().Delete(*SkeletonFilename, false, true, true);
+        Transaction.Cancel();
+        return RollbackError(
+            TEXT("skeleton_save_failed"), SkeletonPackagePath, true, bMeshRollbackSaved && bSkeletonRemoved);
     }
 
     TSharedRef<FJsonObject> Result = MakeShared<FJsonObject>();

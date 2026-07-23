@@ -83,6 +83,15 @@ public:
 	UFUNCTION(BlueprintPure, Category = "PropHunt|Objective")
 	FText GetObjectiveDisplayName() const;
 
+	UFUNCTION(BlueprintPure, Category = "PropHunt|Objective|Presentation")
+	USceneComponent* GetPresentationRoot() const { return PresentationRoot; }
+
+	UFUNCTION(BlueprintPure, Category = "PropHunt|Objective|Presentation")
+	USceneComponent* GetInteractionAnchor() const { return InteractionAnchor; }
+
+	UFUNCTION(BlueprintPure, Category = "PropHunt|Objective|Presentation")
+	bool UsesNativeFallbackVisuals() const { return bShowNativeFallbackVisuals; }
+
 	UFUNCTION(BlueprintPure, Category = "PropHunt|Objective")
 	bool IsObjectiveCompleted() const { return bCompleted; }
 
@@ -105,6 +114,7 @@ public:
 	float GetHunterMeleeRegressionFraction() const { return HunterMeleeRegressionFraction; }
 
 	FVector GetInteractionPoint() const;
+	bool IsWithinInteractionRange(const FVector& CharacterLocation) const;
 	bool CanPropInteract(const APHPropCharacter& PropCharacter) const;
 	bool ServerTryBeginInteraction(APHPropCharacter& PropCharacter);
 	void ServerEndInteraction(APHPropCharacter& PropCharacter);
@@ -112,13 +122,13 @@ public:
 	void ResetForMatch(bool bShouldBeActive);
 
 protected:
-	UFUNCTION(BlueprintImplementableEvent, Category = "PropHunt|Objective", meta = (DisplayName = "On Objective State Changed"))
+	UFUNCTION(BlueprintImplementableEvent, BlueprintCosmetic, Category = "PropHunt|Objective", meta = (DisplayName = "On Objective State Changed"))
 	void BP_OnObjectiveStateChanged();
 
-	UFUNCTION(BlueprintImplementableEvent, Category = "PropHunt|Objective", meta = (DisplayName = "On Objective Completed"))
+	UFUNCTION(BlueprintImplementableEvent, BlueprintCosmetic, Category = "PropHunt|Objective", meta = (DisplayName = "On Objective Completed"))
 	void BP_OnObjectiveCompleted();
 
-	UFUNCTION(BlueprintImplementableEvent, Category = "PropHunt|Objective", meta = (DisplayName = "On Objective Hit By Hunter"))
+	UFUNCTION(BlueprintImplementableEvent, BlueprintCosmetic, Category = "PropHunt|Objective", meta = (DisplayName = "On Objective Hit By Hunter"))
 	void BP_OnObjectiveHitByHunter(float RegressionAmount);
 
 private:
@@ -133,11 +143,20 @@ private:
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "PropHunt|Objective", meta = (AllowPrivateAccess = "true"))
 	TObjectPtr<USceneComponent> SceneRoot;
 
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "PropHunt|Objective|Presentation", meta = (AllowPrivateAccess = "true"))
+	TObjectPtr<USceneComponent> PresentationRoot;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "PropHunt|Objective|Presentation", meta = (AllowPrivateAccess = "true"))
+	TObjectPtr<USceneComponent> InteractionAnchor;
+
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "PropHunt|Objective", meta = (AllowPrivateAccess = "true"))
 	TObjectPtr<UStaticMeshComponent> ObjectiveBody;
 
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "PropHunt|Objective|Presentation", meta = (AllowPrivateAccess = "true"))
 	FText ObjectiveDisplayName;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "PropHunt|Objective|Presentation", meta = (AllowPrivateAccess = "true"))
+	bool bShowNativeFallbackVisuals;
 
 	UPROPERTY(EditDefaultsOnly, Category = "PropHunt|Objective", meta = (ClampMin = "1.0", ClampMax = "120.0", Units = "s", AllowPrivateAccess = "true"))
 	float InteractionDurationSeconds;

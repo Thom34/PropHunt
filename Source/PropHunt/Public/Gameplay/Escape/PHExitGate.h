@@ -45,6 +45,18 @@ public:
 	UFUNCTION(BlueprintPure, Category = "PropHunt|Escape")
 	float GetInteractionDistance() const { return InteractionDistance; }
 
+	UFUNCTION(BlueprintPure, Category = "PropHunt|Escape|Presentation")
+	FText GetExitDisplayName() const;
+
+	UFUNCTION(BlueprintPure, Category = "PropHunt|Escape|Presentation")
+	USceneComponent* GetPresentationRoot() const { return PresentationRoot; }
+
+	UFUNCTION(BlueprintPure, Category = "PropHunt|Escape|Presentation")
+	USceneComponent* GetInteractionAnchor() const { return InteractionAnchor; }
+
+	UFUNCTION(BlueprintPure, Category = "PropHunt|Escape|Presentation")
+	bool UsesNativeFallbackVisuals() const { return bShowNativeFallbackVisuals; }
+
 	FVector GetInteractionPoint() const;
 	bool IsWithinInteractionRange(const FVector& CharacterLocation) const;
 	bool CanPropInteract(const APHPropCharacter& PropCharacter) const;
@@ -58,7 +70,7 @@ public:
 #endif
 
 protected:
-	UFUNCTION(BlueprintImplementableEvent, Category = "PropHunt|Escape", meta = (DisplayName = "On Exit Gate State Changed"))
+	UFUNCTION(BlueprintImplementableEvent, BlueprintCosmetic, Category = "PropHunt|Escape", meta = (DisplayName = "On Exit Gate State Changed"))
 	void BP_OnExitGateStateChanged();
 
 private:
@@ -81,6 +93,12 @@ private:
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "PropHunt|Escape", meta = (AllowPrivateAccess = "true"))
 	TObjectPtr<USceneComponent> SceneRoot;
 
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "PropHunt|Escape|Presentation", meta = (AllowPrivateAccess = "true"))
+	TObjectPtr<USceneComponent> PresentationRoot;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "PropHunt|Escape|Presentation", meta = (AllowPrivateAccess = "true"))
+	TObjectPtr<USceneComponent> InteractionAnchor;
+
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "PropHunt|Escape", meta = (AllowPrivateAccess = "true"))
 	TObjectPtr<UStaticMeshComponent> FrameLeft;
 
@@ -101,6 +119,12 @@ private:
 
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "PropHunt|Escape", meta = (AllowPrivateAccess = "true"))
 	TObjectPtr<UBoxComponent> ExitVolume;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "PropHunt|Escape|Presentation", meta = (AllowPrivateAccess = "true"))
+	FText ExitDisplayName;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "PropHunt|Escape|Presentation", meta = (AllowPrivateAccess = "true"))
+	bool bShowNativeFallbackVisuals;
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "PropHunt|Escape", meta = (ClampMin = "1.0", ClampMax = "120.0", Units = "s", AllowPrivateAccess = "true"))
 	float OpenDurationSeconds;

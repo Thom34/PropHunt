@@ -16,7 +16,9 @@
 DEFINE_LOG_CATEGORY_STATIC(LogPHRetention, Log, All);
 
 APHRetentionPoint::APHRetentionPoint()
-	: InteractionDistance(225.0f)
+	: RetentionDisplayName(NSLOCTEXT("PropHuntRetention", "DefaultDisplayName", "RETENTION"))
+	, bShowNativeFallbackVisuals(true)
+	, InteractionDistance(225.0f)
 	, ReleaseDuration(2.0f)
 	, RetainedProp(nullptr)
 	, ReleaseRescuer(nullptr)
@@ -31,8 +33,15 @@ APHRetentionPoint::APHRetentionPoint()
 	SceneRoot = CreateDefaultSubobject<USceneComponent>(TEXT("SceneRoot"));
 	SetRootComponent(SceneRoot);
 
+	PresentationRoot = CreateDefaultSubobject<USceneComponent>(TEXT("PresentationRoot"));
+	PresentationRoot->SetupAttachment(SceneRoot);
+
+	InteractionAnchor = CreateDefaultSubobject<USceneComponent>(TEXT("InteractionAnchor"));
+	InteractionAnchor->SetupAttachment(SceneRoot);
+	InteractionAnchor->SetRelativeLocation(FVector(0.0f, 0.0f, 130.0f));
+
 	GrayboxBody = CreateDefaultSubobject<UStaticMeshComponent>(TEXT("GrayboxBody"));
-	GrayboxBody->SetupAttachment(SceneRoot);
+	GrayboxBody->SetupAttachment(PresentationRoot);
 	GrayboxBody->SetRelativeLocation(FVector(0.0f, 0.0f, 30.0f));
 	GrayboxBody->SetRelativeScale3D(FVector(0.85f, 0.85f, 0.6f));
 	GrayboxBody->SetCollisionEnabled(ECollisionEnabled::QueryOnly);
@@ -44,26 +53,26 @@ APHRetentionPoint::APHRetentionPoint()
 	GrayboxBody->CanCharacterStepUpOn = ECB_No;
 
 	RetentionPole = CreateDefaultSubobject<UStaticMeshComponent>(TEXT("RetentionPole"));
-	RetentionPole->SetupAttachment(SceneRoot);
+	RetentionPole->SetupAttachment(PresentationRoot);
 	RetentionPole->SetRelativeLocation(FVector(0.0f, 0.0f, 145.0f));
 	RetentionPole->SetRelativeScale3D(FVector(0.32f, 0.32f, 1.75f));
 	RetentionPole->SetCollisionEnabled(ECollisionEnabled::NoCollision);
 	RetentionPole->SetCanEverAffectNavigation(false);
 
 	FrontLabel = CreateDefaultSubobject<UTextRenderComponent>(TEXT("FrontLabel"));
-	FrontLabel->SetupAttachment(SceneRoot);
+	FrontLabel->SetupAttachment(PresentationRoot);
 	FrontLabel->SetRelativeLocation(FVector(-45.0f, 0.0f, 250.0f));
 	FrontLabel->SetRelativeRotation(FRotator(0.0f, 180.0f, 0.0f));
 	FrontLabel->SetHorizontalAlignment(EHTA_Center);
 	FrontLabel->SetWorldSize(32.0f);
-	FrontLabel->SetText(FText::FromString(TEXT("PIQUET\nE : ACCROCHER | CLIC : LIBERER")));
+	FrontLabel->SetText(RetentionDisplayName);
 
 	BackLabel = CreateDefaultSubobject<UTextRenderComponent>(TEXT("BackLabel"));
-	BackLabel->SetupAttachment(SceneRoot);
+	BackLabel->SetupAttachment(PresentationRoot);
 	BackLabel->SetRelativeLocation(FVector(45.0f, 0.0f, 250.0f));
 	BackLabel->SetHorizontalAlignment(EHTA_Center);
 	BackLabel->SetWorldSize(32.0f);
-	BackLabel->SetText(FText::FromString(TEXT("PIQUET\nE : ACCROCHER | CLIC : LIBERER")));
+	BackLabel->SetText(RetentionDisplayName);
 
 	RetentionAnchor = CreateDefaultSubobject<USceneComponent>(TEXT("RetentionAnchor"));
 	RetentionAnchor->SetupAttachment(SceneRoot);
@@ -80,6 +89,20 @@ APHRetentionPoint::APHRetentionPoint()
 	{
 		RetentionPole->SetStaticMesh(CylinderMesh.Object);
 	}
+}
+
+void APHRetentionPoint::BeginPlay()
+{
+	Super::BeginPlay();
+	RefreshPresentation();
+	BP_OnRetentionStateChanged();
+}
+
+FText APHRetentionPoint::GetRetentionDisplayName() const
+{
+	return RetentionDisplayName.IsEmpty()
+		? NSLOCTEXT("PropHuntRetention", "DefaultDisplayName", "RETENTION")
+		: RetentionDisplayName;
 }
 
 void APHRetentionPoint::Tick(const float DeltaSeconds)
@@ -136,7 +159,13 @@ void APHRetentionPoint::GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& Ou
 
 FVector APHRetentionPoint::GetInteractionPoint() const
 {
-	return RetentionAnchor != nullptr ? RetentionAnchor->GetComponentLocation() : GetActorLocation();
+	return InteractionAnchor != nullptr ? InteractionAnchor->GetComponentLocation() : GetActorLocation();
+}
+
+bool APHRetentionPoint::IsWithinInteractionRange(const FVector& CharacterLocation) const
+{
+	const float SafeInteractionDistance = FMath::Clamp(InteractionDistance, 100.0f, 500.0f);
+	return FVector::DistSquared(CharacterLocation, GetInteractionPoint()) <= FMath::Square(SafeInteractionDistance);
 }
 
 bool APHRetentionPoint::CanHunterRetain(const APHHunterCharacter& Hunter, const APHPropCharacter& Prop) const
@@ -147,8 +176,7 @@ bool APHRetentionPoint::CanHunterRetain(const APHHunterCharacter& Hunter, const 
 		&& RetainedProp == nullptr
 		&& Hunter.GetCarriedProp() == &Prop
 		&& (Phase == EPHMatchPhase::Hunt || Phase == EPHMatchPhase::Escape)
-		&& FVector::DistSquared(Hunter.GetActorLocation(), GetActorLocation())
-			<= FMath::Square(FMath::Clamp(InteractionDistance, 100.0f, 500.0f))
+		&& IsWithinInteractionRange(Hunter.GetActorLocation())
 		&& HasLineOfSightFrom(Hunter);
 }
 
@@ -220,12 +248,37 @@ void APHRetentionPoint::ClearRetainedProp(const APHPropCharacter* ExpectedProp)
 
 void APHRetentionPoint::OnRep_RetainedProp()
 {
+	RefreshPresentation();
 	BP_OnRetentionStateChanged();
 }
 
 void APHRetentionPoint::OnRep_ReleaseState()
 {
+	RefreshPresentation();
 	BP_OnRetentionStateChanged();
+}
+
+void APHRetentionPoint::RefreshPresentation()
+{
+	const FText DisplayName = GetRetentionDisplayName();
+	if (GrayboxBody != nullptr)
+	{
+		GrayboxBody->SetVisibility(bShowNativeFallbackVisuals, false);
+	}
+	if (RetentionPole != nullptr)
+	{
+		RetentionPole->SetVisibility(bShowNativeFallbackVisuals, false);
+	}
+	if (FrontLabel != nullptr)
+	{
+		FrontLabel->SetText(DisplayName);
+		FrontLabel->SetVisibility(bShowNativeFallbackVisuals, false);
+	}
+	if (BackLabel != nullptr)
+	{
+		BackLabel->SetText(DisplayName);
+		BackLabel->SetVisibility(bShowNativeFallbackVisuals, false);
+	}
 }
 
 bool APHRetentionPoint::CanRescuerRelease(const APHPropCharacter& Rescuer) const
@@ -241,8 +294,7 @@ bool APHRetentionPoint::CanRescuerRelease(const APHPropCharacter& Rescuer) const
 		&& Rescuer.GetActivePropForm() == nullptr
 		&& (Phase == EPHMatchPhase::Hunt || Phase == EPHMatchPhase::Escape)
 		&& Rescuer.CanPerformCaptureRescue()
-		&& FVector::DistSquared(Rescuer.GetActorLocation(), GetActorLocation())
-			<= FMath::Square(FMath::Clamp(InteractionDistance, 100.0f, 500.0f))
+		&& IsWithinInteractionRange(Rescuer.GetActorLocation())
 		&& HasLineOfSightFrom(Rescuer);
 }
 

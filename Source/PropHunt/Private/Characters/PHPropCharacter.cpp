@@ -3199,11 +3199,8 @@ bool APHPropCharacter::TryResolveObjectiveTarget(APHObjectiveActor*& OutObjectiv
 
 		const FVector ToObjective = Candidate->GetInteractionPoint() - SelectionOrigin;
 		const float Distance = ToObjective.Size();
-		const float CandidateInteractionDistance = FMath::Clamp(
-			Candidate->GetInteractionDistance(), 100.0f, 500.0f);
 		if (Distance <= KINDA_SMALL_NUMBER || Distance > SafeSearchDistance
-			|| FVector::DistSquared(GetActorLocation(), Candidate->GetActorLocation())
-				> FMath::Square(CandidateInteractionDistance))
+			|| !Candidate->IsWithinInteractionRange(GetActorLocation()))
 		{
 			continue;
 		}
@@ -3409,16 +3406,18 @@ bool APHPropCharacter::TryResolveRetentionPoint(APHRetentionPoint*& OutRetention
 			continue;
 		}
 
-		const float InteractionDistanceFromBody = FVector::Dist(GetActorLocation(), Candidate->GetActorLocation());
-		if (InteractionDistanceFromBody > SafeDistance)
+		const float InteractionDistanceFromAnchor = FVector::Dist(
+			GetActorLocation(), Candidate->GetInteractionPoint());
+		if (!Candidate->IsWithinInteractionRange(GetActorLocation())
+			|| InteractionDistanceFromAnchor > SafeDistance)
 		{
 			continue;
 		}
 
-		if (OutRetentionPoint == nullptr || InteractionDistanceFromBody < BestDistance)
+		if (OutRetentionPoint == nullptr || InteractionDistanceFromAnchor < BestDistance)
 		{
 			OutRetentionPoint = Candidate;
-			BestDistance = InteractionDistanceFromBody;
+			BestDistance = InteractionDistanceFromAnchor;
 		}
 	}
 

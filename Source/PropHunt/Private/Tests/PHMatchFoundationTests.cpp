@@ -41,6 +41,7 @@
 #include "UI/PHInGameMenuWidget.h"
 #include "UI/PHMatchmakingWidget.h"
 #include "UI/PHHumanStaminaWidget.h"
+#include "UObject/Class.h"
 #include "UObject/SoftObjectPath.h"
 
 #if WITH_DEV_AUTOMATION_TESTS
@@ -65,6 +66,12 @@ bool HasActionMapping(const UInputSettings& InputSettings, const FName ActionNam
 		{
 			return Mapping.ActionName == ActionName && Mapping.Key == Key;
 		});
+}
+
+bool IsBlueprintCosmeticEvent(const UClass& Class, const FName FunctionName)
+{
+	const UFunction* Function = Class.FindFunctionByName(FunctionName);
+	return Function != nullptr && Function->HasAnyFunctionFlags(FUNC_BlueprintCosmetic);
 }
 }
 
@@ -607,6 +614,24 @@ bool FPHCaptureFlowDefaultsTest::RunTest(const FString& Parameters)
 	TestEqual(TEXT("Retention rescue requires a short hold"), PointDefaults->GetReleaseDuration(), 2.0f);
 	TestEqual(TEXT("Retention rescue starts empty"), PointDefaults->GetReleaseProgressNormalized(), 0.0f);
 	TestNull(TEXT("Retention rescue starts without a rescuer"), PointDefaults->GetReleaseRescuer());
+	TestEqual(TEXT("Retention presentation has a neutral authored fallback"),
+		PointDefaults->GetRetentionDisplayName().ToString(), FString(TEXT("RETENTION")));
+	TestNotNull(TEXT("Retention exposes a Blueprint presentation root"), PointDefaults->GetPresentationRoot());
+	TestNotNull(TEXT("Retention exposes a dedicated interaction anchor"), PointDefaults->GetInteractionAnchor());
+	TestNotNull(TEXT("Retention exposes a separate captive attachment anchor"), PointDefaults->GetRetentionAnchor());
+	TestNotEqual(TEXT("Moving a captive attachment cannot silently move the interaction point"),
+		PointDefaults->GetInteractionAnchor(), PointDefaults->GetRetentionAnchor());
+	TestTrue(TEXT("Retention interaction range is centered on the authored interaction anchor"),
+		PointDefaults->IsWithinInteractionRange(PointDefaults->GetInteractionPoint()));
+	TestFalse(TEXT("Retention interaction rejects a point beyond the authored anchor range"),
+		PointDefaults->IsWithinInteractionRange(
+			PointDefaults->GetInteractionPoint()
+				+ FVector(PointDefaults->GetInteractionDistance() + 1.0f, 0.0f, 0.0f)));
+	TestTrue(TEXT("Retention Blueprint state event is presentation-only"),
+		IsBlueprintCosmeticEvent(
+			*APHRetentionPoint::StaticClass(), TEXT("BP_OnRetentionStateChanged")));
+	TestTrue(TEXT("Existing authored maps keep their native fallback presentation"),
+		PointDefaults->UsesNativeFallbackVisuals());
 	TestTrue(TEXT("Human prototype selector replicates"), SelectorDefaults->GetIsReplicated());
 	TestEqual(TEXT("Human prototype selector is reachable near the authored starts"), SelectorDefaults->GetInteractionDistance(), 350.0f);
 	TestTrue(TEXT("A valid melee hit downs a free Prop"),
@@ -797,6 +822,15 @@ bool FPHExitGateDefaultsTest::RunTest(const FString& Parameters)
 	TestTrue(TEXT("Exit gate replicates"), GateDefaults->GetIsReplicated());
 	TestEqual(TEXT("Opening a gate takes twenty seconds"), GateDefaults->GetOpenDurationSeconds(), 20.0f);
 	TestEqual(TEXT("Gate interaction uses the short contextual range"), GateDefaults->GetInteractionDistance(), 225.0f);
+	TestEqual(TEXT("Exit presentation has a neutral authored fallback"),
+		GateDefaults->GetExitDisplayName().ToString(), FString(TEXT("SORTIE")));
+	TestNotNull(TEXT("Exit gate exposes a Blueprint presentation root"), GateDefaults->GetPresentationRoot());
+	TestNotNull(TEXT("Exit gate exposes a dedicated interaction anchor"), GateDefaults->GetInteractionAnchor());
+	TestTrue(TEXT("Exit Blueprint state event is presentation-only"),
+		IsBlueprintCosmeticEvent(
+			*APHExitGate::StaticClass(), TEXT("BP_OnExitGateStateChanged")));
+	TestTrue(TEXT("Existing authored maps keep their native exit fallback"),
+		GateDefaults->UsesNativeFallbackVisuals());
 	TestTrue(TEXT("Standing on the offset control box is always inside the interaction range"),
 		GateDefaults->IsWithinInteractionRange(GateDefaults->GetInteractionPoint()));
 	TestFalse(TEXT("Gate is disabled before objectives complete"), GateDefaults->IsGateEnabled());
@@ -867,6 +901,25 @@ bool FPHObjectiveLocalFeedbackTest::RunTest(const FString& Parameters)
 		ObjectiveMeshes.Num(), 1);
 	TestEqual(TEXT("The neutral authored objective name is used by default"),
 		ObjectiveDefaults->GetObjectiveDisplayName().ToString(), FString(TEXT("OBJECTIF")));
+	TestNotNull(TEXT("Objective exposes a Blueprint presentation root"), ObjectiveDefaults->GetPresentationRoot());
+	TestNotNull(TEXT("Objective exposes a dedicated interaction anchor"), ObjectiveDefaults->GetInteractionAnchor());
+	TestTrue(TEXT("Objective interaction range is centered on the authored interaction anchor"),
+		ObjectiveDefaults->IsWithinInteractionRange(ObjectiveDefaults->GetInteractionPoint()));
+	TestFalse(TEXT("Objective interaction rejects a point beyond the authored anchor range"),
+		ObjectiveDefaults->IsWithinInteractionRange(
+			ObjectiveDefaults->GetInteractionPoint()
+				+ FVector(ObjectiveDefaults->GetInteractionDistance() + 1.0f, 0.0f, 0.0f)));
+	TestTrue(TEXT("Objective state event is presentation-only"),
+		IsBlueprintCosmeticEvent(
+			*APHObjectiveActor::StaticClass(), TEXT("BP_OnObjectiveStateChanged")));
+	TestTrue(TEXT("Objective completion event is presentation-only"),
+		IsBlueprintCosmeticEvent(
+			*APHObjectiveActor::StaticClass(), TEXT("BP_OnObjectiveCompleted")));
+	TestTrue(TEXT("Objective Hunter-hit event is presentation-only"),
+		IsBlueprintCosmeticEvent(
+			*APHObjectiveActor::StaticClass(), TEXT("BP_OnObjectiveHitByHunter")));
+	TestTrue(TEXT("Existing authored maps keep their native objective fallback"),
+		ObjectiveDefaults->UsesNativeFallbackVisuals());
 	const FProperty* DisplayNameProperty = APHObjectiveActor::StaticClass()->FindPropertyByName(TEXT("ObjectiveDisplayName"));
 	TestNotNull(TEXT("ObjectiveDisplayName is exposed for authored presentation"), DisplayNameProperty);
 	if (DisplayNameProperty != nullptr)

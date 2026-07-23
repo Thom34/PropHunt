@@ -19,6 +19,7 @@ class PROPHUNT_API APHRetentionPoint : public AActor
 public:
 	APHRetentionPoint();
 
+	virtual void BeginPlay() override;
 	virtual void Tick(float DeltaSeconds) override;
 	virtual void EndPlay(const EEndPlayReason::Type EndPlayReason) override;
 	virtual void GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& OutLifetimeProps) const override;
@@ -38,6 +39,21 @@ public:
 	UFUNCTION(BlueprintPure, Category = "PropHunt|Capture")
 	APHPropCharacter* GetReleaseRescuer() const { return ReleaseRescuer; }
 
+	UFUNCTION(BlueprintPure, Category = "PropHunt|Capture|Presentation")
+	FText GetRetentionDisplayName() const;
+
+	UFUNCTION(BlueprintPure, Category = "PropHunt|Capture|Presentation")
+	USceneComponent* GetPresentationRoot() const { return PresentationRoot; }
+
+	UFUNCTION(BlueprintPure, Category = "PropHunt|Capture|Presentation")
+	USceneComponent* GetInteractionAnchor() const { return InteractionAnchor; }
+
+	UFUNCTION(BlueprintPure, Category = "PropHunt|Capture|Presentation")
+	USceneComponent* GetRetentionAnchor() const { return RetentionAnchor; }
+
+	UFUNCTION(BlueprintPure, Category = "PropHunt|Capture|Presentation")
+	bool UsesNativeFallbackVisuals() const { return bShowNativeFallbackVisuals; }
+
 	bool IsReleaseInProgressFor(const APHPropCharacter& Prop) const
 	{
 		return RetainedProp == &Prop && ReleaseRescuer != nullptr;
@@ -45,8 +61,7 @@ public:
 
 	UFUNCTION(BlueprintPure, Category = "PropHunt|Capture")
 	FVector GetInteractionPoint() const;
-
-	USceneComponent* GetRetentionAnchor() const { return RetentionAnchor; }
+	bool IsWithinInteractionRange(const FVector& CharacterLocation) const;
 
 	bool CanHunterRetain(const APHHunterCharacter& Hunter, const APHPropCharacter& Prop) const;
 	bool ServerTryRetain(APHHunterCharacter& Hunter, APHPropCharacter& Prop);
@@ -55,7 +70,7 @@ public:
 	void ClearRetainedProp(const APHPropCharacter* ExpectedProp);
 
 protected:
-	UFUNCTION(BlueprintImplementableEvent, Category = "PropHunt|Capture", meta = (DisplayName = "On Retention State Changed"))
+	UFUNCTION(BlueprintImplementableEvent, BlueprintCosmetic, Category = "PropHunt|Capture", meta = (DisplayName = "On Retention State Changed"))
 	void BP_OnRetentionStateChanged();
 
 private:
@@ -69,9 +84,16 @@ private:
 	bool HasLineOfSightFrom(const AActor& Interactor) const;
 	void CompleteRelease();
 	void ResetReleaseState();
+	void RefreshPresentation();
 
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "PropHunt|Capture", meta = (AllowPrivateAccess = "true"))
 	TObjectPtr<USceneComponent> SceneRoot;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "PropHunt|Capture|Presentation", meta = (AllowPrivateAccess = "true"))
+	TObjectPtr<USceneComponent> PresentationRoot;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "PropHunt|Capture|Presentation", meta = (AllowPrivateAccess = "true"))
+	TObjectPtr<USceneComponent> InteractionAnchor;
 
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "PropHunt|Capture", meta = (AllowPrivateAccess = "true"))
 	TObjectPtr<UStaticMeshComponent> GrayboxBody;
@@ -87,6 +109,12 @@ private:
 
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "PropHunt|Capture", meta = (AllowPrivateAccess = "true"))
 	TObjectPtr<USceneComponent> RetentionAnchor;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "PropHunt|Capture|Presentation", meta = (AllowPrivateAccess = "true"))
+	FText RetentionDisplayName;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "PropHunt|Capture|Presentation", meta = (AllowPrivateAccess = "true"))
+	bool bShowNativeFallbackVisuals;
 
 	UPROPERTY(EditDefaultsOnly, Category = "PropHunt|Capture", meta = (ClampMin = "100.0", ClampMax = "500.0", Units = "cm", AllowPrivateAccess = "true"))
 	float InteractionDistance;

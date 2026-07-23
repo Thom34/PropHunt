@@ -14,7 +14,9 @@
 DEFINE_LOG_CATEGORY_STATIC(LogPHExitGate, Log, All);
 
 APHExitGate::APHExitGate()
-	: OpenDurationSeconds(20.0f)
+	: ExitDisplayName(NSLOCTEXT("PropHuntExitGate", "DefaultDisplayName", "SORTIE"))
+	, bShowNativeFallbackVisuals(true)
+	, OpenDurationSeconds(20.0f)
 	, InteractionDistance(225.0f)
 	, OpenProgress(0.0f)
 	, bGateEnabled(false)
@@ -29,12 +31,19 @@ APHExitGate::APHExitGate()
 	SceneRoot = CreateDefaultSubobject<USceneComponent>(TEXT("SceneRoot"));
 	SetRootComponent(SceneRoot);
 
+	PresentationRoot = CreateDefaultSubobject<USceneComponent>(TEXT("PresentationRoot"));
+	PresentationRoot->SetupAttachment(SceneRoot);
+
+	InteractionAnchor = CreateDefaultSubobject<USceneComponent>(TEXT("InteractionAnchor"));
+	InteractionAnchor->SetupAttachment(SceneRoot);
+	InteractionAnchor->SetRelativeLocation(FVector(-55.0f, -230.0f, 120.0f));
+
 	static ConstructorHelpers::FObjectFinder<UStaticMesh> CubeMesh(TEXT("/Engine/BasicShapes/Cube.Cube"));
 	UStaticMesh* CubeMeshObject = CubeMesh.Succeeded() ? CubeMesh.Object : nullptr;
 	auto CreatePart = [this, CubeMeshObject](const FName Name, const FVector& Location, const FVector& Scale)
 	{
 		UStaticMeshComponent* Part = CreateDefaultSubobject<UStaticMeshComponent>(Name);
-		Part->SetupAttachment(SceneRoot);
+		Part->SetupAttachment(PresentationRoot);
 		if (CubeMeshObject != nullptr)
 		{
 			Part->SetStaticMesh(CubeMeshObject);
@@ -68,6 +77,14 @@ void APHExitGate::BeginPlay()
 {
 	Super::BeginPlay();
 	RefreshPresentation();
+	BP_OnExitGateStateChanged();
+}
+
+FText APHExitGate::GetExitDisplayName() const
+{
+	return ExitDisplayName.IsEmpty()
+		? NSLOCTEXT("PropHuntExitGate", "DefaultDisplayName", "SORTIE")
+		: ExitDisplayName;
 }
 
 void APHExitGate::Tick(const float DeltaSeconds)
@@ -122,7 +139,7 @@ void APHExitGate::GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& OutLifet
 
 FVector APHExitGate::GetInteractionPoint() const
 {
-	return ControlBox != nullptr ? ControlBox->GetComponentLocation() : GetActorLocation();
+	return InteractionAnchor != nullptr ? InteractionAnchor->GetComponentLocation() : GetActorLocation();
 }
 
 bool APHExitGate::IsWithinInteractionRange(const FVector& CharacterLocation) const
@@ -250,6 +267,14 @@ void APHExitGate::HandleExitVolumeBeginOverlap(
 
 void APHExitGate::RefreshPresentation()
 {
+	for (UStaticMeshComponent* NativeVisual : { FrameLeft.Get(), FrameRight.Get(), FrameTop.Get(), DoorLeft.Get(), DoorRight.Get(), ControlBox.Get() })
+	{
+		if (NativeVisual != nullptr)
+		{
+			NativeVisual->SetVisibility(bShowNativeFallbackVisuals, false);
+		}
+	}
+
 	const float OpenAlpha = bGateOpen ? 1.0f : FMath::SmoothStep(0.0f, 1.0f, OpenProgress);
 	if (DoorLeft != nullptr)
 	{

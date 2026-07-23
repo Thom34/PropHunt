@@ -774,6 +774,7 @@ bool APHHunterCharacter::TryResolveRetentionPoint(APHRetentionPoint*& OutPoint) 
 		const FVector ToPoint = Candidate->GetInteractionPoint() - Origin;
 		const float Distance = ToPoint.Size();
 		if (Distance <= KINDA_SMALL_NUMBER || Distance > SafeDistance
+			|| !Candidate->IsWithinInteractionRange(GetActorLocation())
 			|| FVector::DotProduct(AimDirection, ToPoint / Distance) < MinimumAimDot
 			|| !HasCaptureLineOfSight(*Candidate, Candidate->GetInteractionPoint()))
 		{
@@ -803,7 +804,7 @@ bool APHHunterCharacter::IsNearAvailableRetentionPoint() const
 	{
 		const APHRetentionPoint* Point = *PointIterator;
 		if (IsValid(Point) && Point->GetRetainedProp() == nullptr
-			&& FVector::DistSquared(GetActorLocation(), Point->GetActorLocation()) <= FMath::Square(SafeDistance)
+			&& Point->IsWithinInteractionRange(GetActorLocation())
 			&& Point->CanHunterRetain(*this, *CarriedProp))
 		{
 			return true;

@@ -16,6 +16,7 @@ DEFINE_LOG_CATEGORY_STATIC(LogPHObjective, Log, All);
 
 APHObjectiveActor::APHObjectiveActor()
 	: ObjectiveDisplayName(NSLOCTEXT("PropHuntObjective", "DefaultDisplayName", "OBJECTIF"))
+	, bShowNativeFallbackVisuals(true)
 	, InteractionDurationSeconds(24.0f)
 	, InteractionDistance(225.0f)
 	, MaximumConcurrentInteractors(4)
@@ -38,8 +39,15 @@ APHObjectiveActor::APHObjectiveActor()
 	SceneRoot = CreateDefaultSubobject<USceneComponent>(TEXT("SceneRoot"));
 	SetRootComponent(SceneRoot);
 
+	PresentationRoot = CreateDefaultSubobject<USceneComponent>(TEXT("PresentationRoot"));
+	PresentationRoot->SetupAttachment(SceneRoot);
+
+	InteractionAnchor = CreateDefaultSubobject<USceneComponent>(TEXT("InteractionAnchor"));
+	InteractionAnchor->SetupAttachment(SceneRoot);
+	InteractionAnchor->SetRelativeLocation(FVector(0.0f, 0.0f, 55.0f));
+
 	ObjectiveBody = CreateDefaultSubobject<UStaticMeshComponent>(TEXT("ObjectiveBody"));
-	ObjectiveBody->SetupAttachment(SceneRoot);
+	ObjectiveBody->SetupAttachment(PresentationRoot);
 	ObjectiveBody->SetRelativeLocation(FVector(0.0f, 0.0f, 55.0f));
 	ObjectiveBody->SetRelativeScale3D(FVector(0.8f, 0.8f, 1.1f));
 	ObjectiveBody->SetCollisionEnabled(ECollisionEnabled::QueryOnly);
@@ -68,6 +76,7 @@ void APHObjectiveActor::BeginPlay()
 {
 	Super::BeginPlay();
 	RefreshPresentation();
+	BP_OnObjectiveStateChanged();
 }
 
 void APHObjectiveActor::EndPlay(const EEndPlayReason::Type EndPlayReason)
@@ -150,7 +159,13 @@ void APHObjectiveActor::GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& Ou
 
 FVector APHObjectiveActor::GetInteractionPoint() const
 {
-	return ObjectiveBody != nullptr ? ObjectiveBody->GetComponentLocation() : GetActorLocation();
+	return InteractionAnchor != nullptr ? InteractionAnchor->GetComponentLocation() : GetActorLocation();
+}
+
+bool APHObjectiveActor::IsWithinInteractionRange(const FVector& CharacterLocation) const
+{
+	const float SafeInteractionDistance = FMath::Clamp(InteractionDistance, 100.0f, 500.0f);
+	return FVector::DistSquared(CharacterLocation, GetInteractionPoint()) <= FMath::Square(SafeInteractionDistance);
 }
 
 bool APHObjectiveActor::CanPropInteract(const APHPropCharacter& PropCharacter) const
@@ -171,8 +186,7 @@ bool APHObjectiveActor::CanPropInteract(const APHPropCharacter& PropCharacter) c
 		return false;
 	}
 
-	const float SafeInteractionDistance = FMath::Clamp(InteractionDistance, 100.0f, 500.0f);
-	if (FVector::DistSquared(PropCharacter.GetActorLocation(), GetActorLocation()) > FMath::Square(SafeInteractionDistance))
+	if (!IsWithinInteractionRange(PropCharacter.GetActorLocation()))
 	{
 		return false;
 	}
@@ -295,7 +309,7 @@ void APHObjectiveActor::RefreshPresentation()
 	const bool bVisible = bObjectiveActive;
 	if (ObjectiveBody != nullptr)
 	{
-		ObjectiveBody->SetVisibility(bVisible, true);
+		ObjectiveBody->SetVisibility(bVisible && bShowNativeFallbackVisuals, false);
 		ObjectiveBody->SetCollisionEnabled(bVisible ? ECollisionEnabled::QueryOnly : ECollisionEnabled::NoCollision);
 	}
 }
